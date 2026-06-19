@@ -87,11 +87,18 @@ policy, ignore list, max sessions per run, Devin options).
 
 ## Configuration in CI
 
-The workflow needs one secret:
+The workflow needs:
 
-- `DEVIN_API_KEY` — a Devin API key (Settings → Secrets → Actions).
-- `TARGET_REPO_TOKEN` *(optional)* — a token with read access to the target repo if it is
-  private and the default `GITHUB_TOKEN` cannot read it.
+- `DEVIN_API_KEY` *(secret)* — a Devin `cog_` service-user key / PAT
+  (Settings → Secrets → Actions).
+- `DEVIN_ORG_ID` *(variable)* — your organization id (prefix `org-`), required by the v3
+  API (Settings → Variables → Actions). Can also be set via `devin.org_id` in `config.yaml`.
+- `TARGET_REPO_TOKEN` *(optional secret)* — a token with read access to the target repo if
+  it is private and the default `GITHUB_TOKEN` cannot read it.
+
+The Devin client uses the current **v3** org-scoped API
+(`POST /v3/organizations/{org_id}/sessions`) by default; set `devin.api_version: v1` to use
+the legacy endpoint.
 
 ## Development
 

@@ -33,7 +33,11 @@ class Runner:
     ):
         self.config = config
         self.registry = registry or RegistryClient(allow_prerelease=config.allow_prerelease)
-        self.devin = devin or DevinClient(api_base=config.devin_api_base)
+        self.devin = devin or DevinClient(
+            org_id=config.devin_org_id,
+            api_base=config.devin_api_base,
+            api_version=config.devin_api_version,
+        )
         self.state = state or State.load(config.state_path)
 
     # -- discovery ---------------------------------------------------------

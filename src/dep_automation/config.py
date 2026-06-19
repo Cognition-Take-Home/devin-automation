@@ -38,6 +38,8 @@ class Config:
 
     # --- Devin -------------------------------------------------------------
     devin_api_base: str = "https://api.devin.ai"
+    devin_api_version: str = "v3"
+    devin_org_id: str | None = None  # required by v3; falls back to $DEVIN_ORG_ID
     devin_max_acu_limit: int | None = None
     devin_tags: list[str] = field(default_factory=lambda: ["dependency-automation"])
     devin_idempotent: bool = True
@@ -73,8 +75,11 @@ class Config:
             only=raw.get("only", []),
             max_sessions_per_run=raw.get("max_sessions_per_run", 5),
             devin_api_base=devin.get("api_base", "https://api.devin.ai"),
+            devin_api_version=devin.get("api_version", "v3"),
+            devin_org_id=devin.get("org_id") or os.environ.get("DEVIN_ORG_ID"),
             devin_max_acu_limit=devin.get("max_acu_limit"),
             devin_tags=devin.get("tags", ["dependency-automation"]),
             devin_idempotent=devin.get("idempotent", True),
             create_draft_pr=devin.get("create_draft_pr", True),
+            state_path=raw.get("state_path", "state/processed.json"),
         )

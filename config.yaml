@@ -35,7 +35,9 @@ state_path: state/processed.json
 
 devin:
   api_base: https://api.devin.ai
-  idempotent: true
+  api_version: v3           # v3 is current; cog_ service keys require it
+  # Organization id (prefix "org-"). Falls back to the DEVIN_ORG_ID env var.
+  # org_id: org-xxxxxxxx
   create_draft_pr: true
   tags:
     - dependency-automation
