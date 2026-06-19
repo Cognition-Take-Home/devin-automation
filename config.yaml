@@ -1,0 +1,42 @@
+# Dependency-automation configuration for the Apache Superset target repo.
+#
+# The automation reads only the TOP-LEVEL dependencies of the manifests listed below,
+# compares each against the latest version on its registry, and (for releases that need
+# a manifest change) opens a Devin session to perform a research-led upgrade.
+
+target_repo: Cognition-Take-Home/superset
+# Local checkout used to read manifests. In CI this is the path the superset repo is
+# cloned to; override with --target-repo-path or the TARGET_REPO_PATH env interpolation.
+target_repo_path: ../superset
+base_branch: master
+
+manifests:
+  - path: pyproject.toml
+    include_optional: false   # set true to also track [project.optional-dependencies]
+  - path: superset-frontend/package.json
+    include_dev: true
+
+# out-of-range: only trigger Devin when the latest release is NOT permitted by the
+#               current constraint (i.e. a manifest edit is genuinely required).
+# any-newer:    trigger for any newer release.
+trigger_policy: out-of-range
+allow_prerelease: false
+
+# Cap how many Devin sessions a single run may create, so a large backlog doesn't open
+# dozens of sessions at once.
+max_sessions_per_run: 5
+
+# Packages to never touch (e.g. pinned for known-incompatibility reasons).
+ignore:
+  - apache-superset-core   # has no upstream registry release yet
+# only: []                 # if set, restrict the run to just these names
+
+state_path: state/processed.json
+
+devin:
+  api_base: https://api.devin.ai
+  idempotent: true
+  create_draft_pr: true
+  tags:
+    - dependency-automation
+  # max_acu_limit: 50       # optional safety cap per session

@@ -1,1 +1,103 @@
 # devin-automation
+
+Research-led **dependency-management automation** for the
+[`Cognition-Take-Home/superset`](https://github.com/Cognition-Take-Home/superset)
+repository, driven by the [Devin API](https://docs.devin.ai/api-reference/v1/sessions/create-a-new-devin-session).
+
+It inspects the **top-level** dependencies of the target repo, compares each one against
+the latest version published on its registry (PyPI / npm), and — for releases that need a
+manifest change to adopt — opens a Devin session that performs a *careful, research-led*
+upgrade instead of a blind version bump.
+
+## What makes this different from a plain version bumper
+
+Tools like Dependabot/Renovate bump the number and let CI tell you what broke. This
+automation instead asks Devin to:
+
+1. **Research first** — read the changelog / release notes / migration guides for every
+   release between the current and latest version and summarize what actually changed.
+2. **Adopt improvements thoughtfully** — take advantage of new APIs, performance wins,
+   and the chance to remove old workarounds where it's clearly beneficial and low-risk.
+3. **Never force changes** — risky or large adoptions are *documented as suggested
+   follow-ups in the PR*, not pushed. Tests, type checks, and lint are never weakened to
+   make things pass. The PR is opened as a draft for human review.
+
+The full instruction set lives in
+[`src/dep_automation/prompts.py`](src/dep_automation/prompts.py).
+
+## How it works
+
+```
+manifests (pyproject.toml, package.json)
+        │  parse top-level deps only
+        ▼
+   registries (PyPI / npm)  ──►  is the latest release outside the current constraint?
+        │                                         │ yes
+        ▼                                         ▼
+   de-dup state  ──►  not seen before?  ──►  Devin API: create session (research-led upgrade)
+                                                  │
+                                                  ▼
+                                        draft PR on superset
+```
+
+- **Top-level only** — reads `[project].dependencies` from `pyproject.toml` and
+  `dependencies`/`devDependencies` from `package.json`. Lock files / transitive trees are
+  ignored. `file:`/`git:`/`workspace:` specifiers are skipped.
+- **Outdated detection** — by default (`trigger_policy: out-of-range`) a dependency is
+  flagged only when the latest release is **not permitted by the current constraint**
+  (i.e. a manifest edit is genuinely required). `any-newer` flags any newer release.
+- **De-duplication** — [`state/processed.json`](state/processed.json) records the latest
+  version each dependency was last triggered for, so polling doesn't re-open sessions.
+
+## Triggering: events vs. polling
+
+PyPI and npm do **not** offer consumer-facing push webhooks for third-party packages (you
+can only subscribe to releases of packages you own), so a true "package released" event is
+not available for superset's dependencies. The automation therefore **polls on a
+schedule** via GitHub Actions, and additionally supports:
+
+- `workflow_dispatch` — manual runs (with a dry-run toggle).
+- `repository_dispatch` (type `dependency-release`) — so any external release-watcher you
+  wire up can push an event to trigger a run on demand.
+
+See [`.github/workflows/dependency-automation.yml`](.github/workflows/dependency-automation.yml).
+
+## Usage
+
+```bash
+pip install -e .
+
+# List the top-level dependencies discovered in the target repo
+dep-automation --target-repo-path ../superset list
+
+# Report which dependencies are outdated (no Devin sessions created)
+dep-automation --target-repo-path ../superset check
+dep-automation --target-repo-path ../superset check --json
+
+# Preview what would be triggered, without creating sessions
+dep-automation --target-repo-path ../superset run --dry-run
+
+# Create Devin sessions for outdated dependencies (needs DEVIN_API_KEY)
+export DEVIN_API_KEY=...
+dep-automation --target-repo-path ../superset run
+```
+
+Configuration lives in [`config.yaml`](config.yaml) (target repo, manifests, trigger
+policy, ignore list, max sessions per run, Devin options).
+
+## Configuration in CI
+
+The workflow needs one secret:
+
+- `DEVIN_API_KEY` — a Devin API key (Settings → Secrets → Actions).
+- `TARGET_REPO_TOKEN` *(optional)* — a token with read access to the target repo if it is
+  private and the default `GITHUB_TOKEN` cannot read it.
+
+## Development
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+pytest
+ruff check .
+```

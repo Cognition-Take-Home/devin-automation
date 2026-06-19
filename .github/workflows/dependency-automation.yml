@@ -1,0 +1,87 @@
+name: Dependency automation
+
+# Triggering strategy
+# -------------------
+# PyPI and npm do not offer consumer-facing push webhooks for third-party packages
+# (you can only subscribe to packages you own), so a true "package released" event is
+# not available here. We therefore POLL on a schedule, and also expose:
+#   * workflow_dispatch    - manual runs (with an optional dry-run toggle)
+#   * repository_dispatch  - so any external release-notification system you wire up
+#                            (e.g. a release watcher) can push an event to trigger a run
+on:
+  schedule:
+    - cron: "0 7 * * 1" # every Monday 07:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Discover and report without creating Devin sessions"
+        type: boolean
+        default: true
+  repository_dispatch:
+    types: [dependency-release]
+
+permissions:
+  contents: write # to commit the de-dup state file back to this repo
+
+concurrency:
+  group: dependency-automation
+  cancel-in-progress: false
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    env:
+      DEVIN_API_KEY: ${{ secrets.DEVIN_API_KEY }}
+    steps:
+      - name: Checkout automation repo
+        uses: actions/checkout@v4
+        with:
+          path: automation
+
+      - name: Checkout target repo (superset)
+        uses: actions/checkout@v4
+        with:
+          repository: Cognition-Take-Home/superset
+          path: superset
+          ref: master
+          token: ${{ secrets.TARGET_REPO_TOKEN || github.token }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        working-directory: automation
+        run: pip install -e .
+
+      - name: Check outdated dependencies
+        working-directory: automation
+        run: |
+          dep-automation --target-repo-path "${GITHUB_WORKSPACE}/superset" check
+
+      - name: Run automation
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run == false }}
+        working-directory: automation
+        run: |
+          dep-automation --target-repo-path "${GITHUB_WORKSPACE}/superset" run
+
+      - name: Dry run (workflow_dispatch default)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
+        working-directory: automation
+        run: |
+          dep-automation --target-repo-path "${GITHUB_WORKSPACE}/superset" run --dry-run
+
+      - name: Commit updated state
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run == false }}
+        working-directory: automation
+        run: |
+          if [[ -n "$(git status --porcelain state/)" ]]; then
+            git config user.name "devin-dependency-automation[bot]"
+            git config user.email "devin-dependency-automation[bot]@users.noreply.github.com"
+            git add state/
+            git commit -m "chore: update dependency-automation state"
+            git push
+          else
+            echo "No state changes to commit."
+          fi

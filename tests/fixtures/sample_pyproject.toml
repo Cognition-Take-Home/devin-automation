@@ -1,0 +1,12 @@
+[project]
+name = "sample"
+dependencies = [
+    "celery>=5.3.6, <6.0.0",
+    "click>=8.4.0",
+    "colorama",
+    "pandas[excel]>=2.1.4, <2.4",
+    "gunicorn>=25.3.0, <26; sys_platform != 'win32'",
+]
+
+[project.optional-dependencies]
+athena = ["pyathena[pandas]>=2, <4"]
