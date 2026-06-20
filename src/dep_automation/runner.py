@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .config import Config
 from .devin import DevinApiError, DevinClient
+from .github import GitHubClient, GitHubError
 from .manifests import parse_manifest
 from .metrics import Coverage, Report, build_report
 from .models import (
@@ -33,6 +34,7 @@ class Runner:
         registry: RegistryClient | None = None,
         devin: DevinClient | None = None,
         state: State | None = None,
+        github: GitHubClient | None = None,
     ):
         self.config = config
         self.registry = registry or RegistryClient(allow_prerelease=config.allow_prerelease)
@@ -41,6 +43,7 @@ class Runner:
             api_base=config.devin_api_base,
             api_version=config.devin_api_version,
         )
+        self.github = github or GitHubClient()
         self.state = state or State.load(config.state_path)
 
     # -- discovery ---------------------------------------------------------
@@ -173,10 +176,29 @@ class Runner:
                 pr_state=status.pr_state,
                 acus_consumed=status.acus_consumed,
             )
+            if status.pr_url:
+                self._sync_commits(entry.ecosystem, entry.name, status.pr_url)
             synced += 1
         if synced:
             self.state.save()
         return synced
+
+    def _sync_commits(self, ecosystem: str, name: str, pr_url: str) -> None:
+        """Best-effort: record how many follow-up commits the PR needed (rework signal)."""
+        try:
+            stats = self.github.commit_stats(pr_url)
+        except GitHubError as exc:
+            logger.warning("commit stats unavailable for %s: %s", name, exc)
+            return
+        if stats is None:
+            return
+        self.state.update_commits(
+            ecosystem,
+            name,
+            total_commits=stats.total_commits,
+            followup_commits=stats.followup_commits,
+            human_followup_commits=stats.human_followup_commits,
+        )
 
     def load_history(self) -> list[dict]:
         path = Path(self.config.history_path)

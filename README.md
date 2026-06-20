@@ -106,6 +106,11 @@ this into the signals an engineering leader cares about:
 - **Drift / coverage** (`--coverage`) — how many tracked deps are currently behind; the
   backlog the system is working down.
 - **Throughput over time** — sessions triggered and drift per run, from the history log.
+- **Rework** — after Devin opens a PR, how many *follow-up commits* the branch needed
+  (treating the first commit as Devin's initial work, and splitting human vs. Devin
+  follow-ups). Reported as *% of PRs that needed additional changes* and *avg follow-up
+  commits/PR* — a direct "how landable is the first pass?" signal. Commit data is read with
+  the authenticated `gh` CLI; the metric is omitted gracefully when unavailable.
 - **Cost** — total ACUs consumed.
 
 In CI the workflow runs `report --sync --coverage` every run and publishes the Markdown to
@@ -113,16 +118,30 @@ the **GitHub Actions run summary** (via `$GITHUB_STEP_SUMMARY`), so a leader jus
 latest run to see the dashboard. Example:
 
 ```
-Upgrades tracked: 3  |  active: 1  |  completed: 2
-PRs: 1 open, 0 merged  |  success rate: 50.0%  |  ACUs: 0.0
+Upgrades tracked: 3  |  active: 0  |  completed: 3
+PRs: 2 open, 0 merged  |  success rate: 66.7%  |  ACUs: 0.0
+Rework: 0.0% of PRs needed follow-up commits (avg 0.0/PR, 0 human)
 
 By outcome:
-  PR open (review)       1
-  active                 1
+  PR open (review)       2
   ended, no PR           1
 
 Across 3 run(s): checked 952, outdated 240, triggered 3, errors 0
 ```
+
+### Interactive dashboard (marimo)
+
+For a richer, clickable view there's a [marimo](https://marimo.io) notebook,
+[`dashboard.py`](dashboard.py), that renders the same metrics as KPI cards, an outcomes bar
+chart, a throughput line chart, and a sortable upgrades table — with a reactive toggle to
+sync live data:
+
+```bash
+pip install -e ".[dashboard]"
+marimo run dashboard.py     # read-only app   (or: marimo edit dashboard.py)
+```
+
+It reads the config path from `$DEP_AUTOMATION_CONFIG` (default `config.yaml`).
 
 ## Configuration in CI
 

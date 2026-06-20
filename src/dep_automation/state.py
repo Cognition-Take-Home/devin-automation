@@ -39,6 +39,10 @@ class StateEntry:
     pr_state: str | None = None
     acus_consumed: float | None = None
     last_synced: str | None = None
+    # rework signal: commits on the PR branch after Devin's initial commit
+    total_commits: int | None = None
+    followup_commits: int | None = None
+    human_followup_commits: int | None = None
 
     @classmethod
     def from_dict(cls, key: str, raw: dict) -> StateEntry:
@@ -58,6 +62,9 @@ class StateEntry:
             pr_state=raw.get("pr_state"),
             acus_consumed=raw.get("acus_consumed"),
             last_synced=raw.get("last_synced"),
+            total_commits=raw.get("total_commits"),
+            followup_commits=raw.get("followup_commits"),
+            human_followup_commits=raw.get("human_followup_commits"),
         )
 
     def to_dict(self) -> dict:
@@ -128,6 +135,24 @@ class State:
             pr_state=pr_state,
             acus_consumed=acus_consumed,
             last_synced=_now(),
+        )
+
+    def update_commits(
+        self,
+        ecosystem: Ecosystem | str,
+        name: str,
+        *,
+        total_commits: int,
+        followup_commits: int,
+        human_followup_commits: int,
+    ) -> None:
+        entry = self._data.get(self._key(ecosystem, name))
+        if entry is None:
+            return
+        entry.update(
+            total_commits=total_commits,
+            followup_commits=followup_commits,
+            human_followup_commits=human_followup_commits,
         )
 
     def entries(self) -> list[StateEntry]:

@@ -18,6 +18,11 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.6",
 ]
+dashboard = [
+    "marimo>=0.9",
+    "altair>=5.0",
+    "pandas>=2.0",
+]
 
 [project.scripts]
 dep-automation = "dep_automation.cli:main"
@@ -29,6 +34,9 @@ where = ["src"]
 line-length = 100
 target-version = "py311"
 src = ["src", "tests"]
+# dashboard.py is a marimo notebook; it follows marimo's own cell/display conventions
+# (trailing display expressions, deferred imports) that conflict with standard linting.
+extend-exclude = ["dashboard.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

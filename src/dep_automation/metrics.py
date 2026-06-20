@@ -135,6 +135,39 @@ class Report:
     def total_acus(self) -> float:
         return round(sum(e.acus_consumed or 0.0 for e in self.entries), 2)
 
+    # -- rework signal (commits after Devin's first PR commit) -------------
+
+    @property
+    def _prs_with_commit_data(self) -> list[StateEntry]:
+        return [e for e in self.entries if e.followup_commits is not None]
+
+    @property
+    def prs_with_followups(self) -> int:
+        return sum(1 for e in self._prs_with_commit_data if (e.followup_commits or 0) > 0)
+
+    @property
+    def total_followup_commits(self) -> int:
+        return sum(e.followup_commits or 0 for e in self._prs_with_commit_data)
+
+    @property
+    def total_human_followup_commits(self) -> int:
+        return sum(e.human_followup_commits or 0 for e in self._prs_with_commit_data)
+
+    @property
+    def pct_prs_needing_changes(self) -> float | None:
+        """Share of PRs that needed at least one follow-up commit (None if no PR data)."""
+        n = len(self._prs_with_commit_data)
+        if n == 0:
+            return None
+        return round(100.0 * self.prs_with_followups / n, 1)
+
+    @property
+    def avg_followup_commits(self) -> float | None:
+        n = len(self._prs_with_commit_data)
+        if n == 0:
+            return None
+        return round(self.total_followup_commits / n, 2)
+
     @property
     def history_totals(self) -> dict[str, int]:
         keys = ("checked", "outdated", "triggered", "errors")
@@ -172,9 +205,19 @@ class Report:
                     "session_url": e.session_url,
                     "triggered_at": e.triggered_at,
                     "acus_consumed": e.acus_consumed,
+                    "followup_commits": e.followup_commits,
+                    "human_followup_commits": e.human_followup_commits,
                 }
                 for e in self.entries
             ],
+        }
+        out["rework"] = {
+            "prs_with_commit_data": len(self._prs_with_commit_data),
+            "prs_needing_changes": self.prs_with_followups,
+            "pct_prs_needing_changes": self.pct_prs_needing_changes,
+            "avg_followup_commits": self.avg_followup_commits,
+            "total_followup_commits": self.total_followup_commits,
+            "total_human_followup_commits": self.total_human_followup_commits,
         }
         if self.coverage is not None:
             out["coverage"] = {
@@ -239,6 +282,12 @@ def render_text(report: Report) -> str:
         f"|  success rate: {_fmt_pct(report.success_rate)}  "
         f"|  ACUs: {report.total_acus}"
     )
+    if report._prs_with_commit_data:
+        lines.append(
+            f"Rework: {_fmt_pct(report.pct_prs_needing_changes)} of PRs needed follow-up "
+            f"commits (avg {report.avg_followup_commits}/PR, "
+            f"{report.total_human_followup_commits} human)"
+        )
     lines.append("")
     lines.append("By outcome:")
     for outcome, n in report.by_outcome.items():
@@ -285,6 +334,11 @@ def render_markdown(report: Report) -> str:
     lines.append(f"| PRs merged | {report.prs_merged} |")
     lines.append(f"| Success rate (finished → PR) | {_fmt_pct(report.success_rate)} |")
     lines.append(f"| ACUs consumed | {report.total_acus} |")
+    if report._prs_with_commit_data:
+        lines.append(
+            f"| PRs needing follow-up commits | {_fmt_pct(report.pct_prs_needing_changes)} |"
+        )
+        lines.append(f"| Avg follow-up commits / PR | {report.avg_followup_commits} |")
     if report.history:
         h = report.history_totals
         lines.append(f"| Runs recorded | {len(report.history)} |")
@@ -292,8 +346,8 @@ def render_markdown(report: Report) -> str:
     lines.append("")
     lines.append("### Upgrades")
     lines.append("")
-    lines.append("| Package | Version | Size | Outcome | Link |")
-    lines.append("| --- | --- | --- | --- | --- |")
+    lines.append("| Package | Version | Size | Outcome | Follow-up commits | Link |")
+    lines.append("| --- | --- | --- | --- | --- | --- |")
     for e in report.entries:
         oc = _OUTCOME_LABEL[classify(e)]
         link = ""
@@ -301,9 +355,10 @@ def render_markdown(report: Report) -> str:
             link = f"[PR]({e.pr_url})"
         elif e.session_url:
             link = f"[session]({e.session_url})"
+        followups = "-" if e.followup_commits is None else str(e.followup_commits)
         lines.append(
             f"| `{e.name}` ({e.ecosystem}) | {e.version} | "
-            f"{e.update_kind or 'unknown'} | {oc} | {link} |"
+            f"{e.update_kind or 'unknown'} | {oc} | {followups} | {link} |"
         )
     lines.append("")
     return "\n".join(lines)

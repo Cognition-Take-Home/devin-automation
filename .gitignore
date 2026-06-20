@@ -12,3 +12,5 @@ venv/
 htmlcov/
 *.log
 .env
+__marimo__/
+*.html

@@ -2,6 +2,7 @@ from pathlib import Path
 
 from dep_automation.config import Config, ManifestSpec
 from dep_automation.devin import CreatedSession, SessionStatus
+from dep_automation.github import CommitStats
 from dep_automation.models import Ecosystem
 from dep_automation.runner import Runner
 from dep_automation.state import State
@@ -45,6 +46,18 @@ class FakeDevin:
 
     def get_session(self, session_id):
         return self.statuses.get(session_id, SessionStatus(session_id=session_id))
+
+
+class FakeGitHub:
+    def __init__(self, stats=None):
+        self.stats = stats or CommitStats(
+            total_commits=2, followup_commits=1, human_followup_commits=1
+        )
+        self.calls = []
+
+    def commit_stats(self, pr_url):
+        self.calls.append(pr_url)
+        return self.stats
 
 
 def make_config(tmp_path, **overrides) -> Config:
@@ -196,8 +209,13 @@ def test_sync_statuses_updates_outcomes(tmp_path):
             )
         }
     )
+    github = FakeGitHub()
     runner = Runner(
-        cfg, registry=FakeRegistry(LATEST), devin=devin, state=State.load(cfg.state_path)
+        cfg,
+        registry=FakeRegistry(LATEST),
+        devin=devin,
+        state=State.load(cfg.state_path),
+        github=github,
     )
     runner.run()
     synced = runner.sync_statuses()
@@ -205,6 +223,9 @@ def test_sync_statuses_updates_outcomes(tmp_path):
     entry = next(e for e in runner.state.entries() if e.session_id == "devin-1")
     assert entry.pr_url == "https://github.com/acme/target/pull/9"
     assert entry.acus_consumed == 3.5
+    # commit stats fetched only for the entry that has a PR
+    assert github.calls == ["https://github.com/acme/target/pull/9"]
+    assert entry.followup_commits == 1
 
 
 def test_build_report_with_coverage(tmp_path):

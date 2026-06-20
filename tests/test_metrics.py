@@ -71,6 +71,30 @@ def test_report_throughput_from_history():
     assert totals["errors"] == 1
 
 
+def test_report_rework_aggregates():
+    entries = [
+        _entry("a", pr_url="u1", followup_commits=0, human_followup_commits=0),
+        _entry("b", pr_url="u2", followup_commits=3, human_followup_commits=2),
+        _entry("c", pr_url="u3", followup_commits=1, human_followup_commits=0),
+        _entry("d"),  # no commit data -> excluded from rework denominator
+    ]
+    report = build_report(entries)
+    assert report.prs_with_followups == 2  # b and c
+    assert report.total_followup_commits == 4
+    assert report.total_human_followup_commits == 2
+    # 2 of 3 PRs with data needed changes
+    assert report.pct_prs_needing_changes == round(100 * 2 / 3, 1)
+    assert report.avg_followup_commits == round(4 / 3, 2)
+
+
+def test_report_rework_none_without_data():
+    report = build_report([_entry("a", pr_url="u")])
+    assert report.pct_prs_needing_changes is None
+    assert report.avg_followup_commits is None
+    d = report.to_dict()
+    assert d["rework"]["prs_with_commit_data"] == 0
+
+
 def test_report_to_dict_and_renderers():
     entries = [
         _entry("react", ecosystem="npm", version="19.0.0", update_kind="major", pr_url="u"),
