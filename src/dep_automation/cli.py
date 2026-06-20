@@ -11,9 +11,11 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 
 from .config import Config
+from .metrics import render_markdown, render_text
 from .models import OutdatedDependency, RunReport
 from .runner import Runner
 
@@ -105,6 +107,29 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_report(args: argparse.Namespace) -> int:
+    runner = _build_runner(args)
+    if args.sync:
+        synced = runner.sync_statuses()
+        print(f"Synced {synced} session(s) from the Devin API.", file=sys.stderr)
+    report = runner.build_report(coverage=args.coverage)
+
+    if args.json:
+        print(report.to_json())
+    elif args.markdown:
+        print(render_markdown(report))
+    else:
+        print(render_text(report))
+
+    # When running in GitHub Actions, also publish the markdown report to the run summary
+    # so an engineering leader sees it directly in the Actions UI.
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        with open(summary_path, "a", encoding="utf-8") as fh:
+            fh.write(render_markdown(report) + "\n")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dep-automation", description=__doc__)
     parser.add_argument("-c", "--config", default="config.yaml", help="path to config YAML")
@@ -131,6 +156,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="discover and report without creating Devin sessions",
     )
     p_run.set_defaults(func=_cmd_run)
+
+    p_report = sub.add_parser(
+        "report",
+        help="summarise effectiveness: outcomes, success rate, throughput, drift",
+    )
+    p_report.add_argument(
+        "--sync",
+        action="store_true",
+        help="refresh live session status + PRs from the Devin API before reporting",
+    )
+    p_report.add_argument(
+        "--coverage",
+        action="store_true",
+        help="also compute current drift (how many tracked deps are behind)",
+    )
+    fmt = p_report.add_mutually_exclusive_group()
+    fmt.add_argument("--json", action="store_true", help="emit JSON")
+    fmt.add_argument("--markdown", action="store_true", help="emit Markdown")
+    p_report.set_defaults(func=_cmd_report)
     return parser
 
 

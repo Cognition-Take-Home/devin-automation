@@ -47,6 +47,8 @@ class Config:
 
     # --- state -------------------------------------------------------------
     state_path: str = "state/processed.json"
+    # Append-only log of each run (for throughput / progress-over-time reporting).
+    history_path: str = "state/history.jsonl"
 
     @staticmethod
     def from_file(path: str | Path) -> Config:
@@ -82,4 +84,5 @@ class Config:
             devin_idempotent=devin.get("idempotent", True),
             create_draft_pr=devin.get("create_draft_pr", True),
             state_path=raw.get("state_path", "state/processed.json"),
+            history_path=raw.get("history_path", "state/history.jsonl"),
         )

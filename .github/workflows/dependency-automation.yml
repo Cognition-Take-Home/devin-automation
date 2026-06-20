@@ -73,8 +73,17 @@ jobs:
         run: |
           dep-automation --target-repo-path "${GITHUB_WORKSPACE}/superset" run --dry-run
 
+      - name: Effectiveness report
+        # Always runs (even on dry runs) so the Actions run summary shows the current
+        # state of the system. --sync refreshes live session status + PRs from the API;
+        # --coverage measures how many tracked deps are currently behind.
+        working-directory: automation
+        run: |
+          dep-automation --target-repo-path "${GITHUB_WORKSPACE}/superset" \
+            report --sync --coverage
+
       - name: Commit updated state
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run == false }}
+        if: ${{ always() }}
         working-directory: automation
         run: |
           if [[ -n "$(git status --porcelain state/)" ]]; then

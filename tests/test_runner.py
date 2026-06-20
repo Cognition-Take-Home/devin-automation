@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from dep_automation.config import Config, ManifestSpec
-from dep_automation.devin import CreatedSession
+from dep_automation.devin import CreatedSession, SessionStatus
 from dep_automation.models import Ecosystem
 from dep_automation.runner import Runner
 from dep_automation.state import State
@@ -34,13 +34,17 @@ class FakeRegistry:
 
 
 class FakeDevin:
-    def __init__(self):
+    def __init__(self, statuses=None):
         self.calls = []
+        self.statuses = statuses or {}
 
     def create_session(self, prompt, *, title=None, tags=None, idempotent=True, max_acu_limit=None):
         self.calls.append({"prompt": prompt, "title": title, "tags": tags})
         idx = len(self.calls)
         return CreatedSession(session_id=f"devin-{idx}", url=f"https://app.devin.ai/sessions/{idx}")
+
+    def get_session(self, session_id):
+        return self.statuses.get(session_id, SessionStatus(session_id=session_id))
 
 
 def make_config(tmp_path, **overrides) -> Config:
@@ -53,6 +57,7 @@ def make_config(tmp_path, **overrides) -> Config:
             ManifestSpec(path="sample_package.json"),
         ],
         state_path=str(tmp_path / "state.json"),
+        history_path=str(tmp_path / "history.jsonl"),
         ignore=[],
     )
     for k, v in overrides.items():
@@ -158,3 +163,54 @@ def test_requires_manifest_change_flag(tmp_path):
     runner, _ = make_runner(tmp_path)
     by_name = {od.name: od for od in runner.find_outdated()}
     assert by_name["pandas"].requires_manifest_change is True
+
+
+def test_run_appends_history(tmp_path):
+    runner, _ = make_runner(tmp_path)
+    runner.run()
+    runner.run()  # second run: dedup, triggers nothing but still records a run
+    history = runner.load_history()
+    assert len(history) == 2
+    assert history[0]["triggered"] == 5
+    assert history[1]["triggered"] == 0
+    assert history[0]["checked"] == history[1]["checked"]
+
+
+def test_run_records_update_kind(tmp_path):
+    runner, _ = make_runner(tmp_path)
+    runner.run()
+    kinds = {e.name: e.update_kind for e in runner.state.entries()}
+    assert kinds["gunicorn"] == "major"
+
+
+def test_sync_statuses_updates_outcomes(tmp_path):
+    cfg = make_config(tmp_path)
+    devin = FakeDevin(
+        statuses={
+            "devin-1": SessionStatus(
+                session_id="devin-1",
+                status="finished",
+                pr_url="https://github.com/acme/target/pull/9",
+                pr_state="open",
+                acus_consumed=3.5,
+            )
+        }
+    )
+    runner = Runner(
+        cfg, registry=FakeRegistry(LATEST), devin=devin, state=State.load(cfg.state_path)
+    )
+    runner.run()
+    synced = runner.sync_statuses()
+    assert synced == 5
+    entry = next(e for e in runner.state.entries() if e.session_id == "devin-1")
+    assert entry.pr_url == "https://github.com/acme/target/pull/9"
+    assert entry.acus_consumed == 3.5
+
+
+def test_build_report_with_coverage(tmp_path):
+    runner, _ = make_runner(tmp_path)
+    runner.run()
+    report = runner.build_report(coverage=True)
+    assert report.total == 5
+    assert report.coverage is not None
+    assert report.coverage.outdated == 5

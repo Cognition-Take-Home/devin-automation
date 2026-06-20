@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .config import Config
-from .devin import DevinClient
+from .devin import DevinApiError, DevinClient
 from .manifests import parse_manifest
+from .metrics import Coverage, Report, build_report
 from .models import (
     Dependency,
     OutdatedDependency,
@@ -131,7 +134,76 @@ class Runner:
 
         if not dry_run:
             self.state.save()
+            self._append_history(report)
         return report
+
+    def _append_history(self, report: RunReport) -> None:
+        """Append a one-line record of this run for throughput-over-time reporting."""
+        record = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "checked": report.checked,
+            "outdated": len(report.outdated),
+            "triggered": len(report.triggered),
+            "errors": len(report.errors),
+        }
+        path = Path(self.config.history_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
+
+    # -- reporting ---------------------------------------------------------
+
+    def sync_statuses(self) -> int:
+        """Refresh live status + PR info for every tracked session. Returns count synced."""
+        synced = 0
+        for entry in self.state.entries():
+            if not entry.session_id:
+                continue
+            try:
+                status = self.devin.get_session(entry.session_id)
+            except DevinApiError as exc:
+                logger.warning("status sync failed for %s: %s", entry.name, exc)
+                continue
+            self.state.update_status(
+                entry.ecosystem,
+                entry.name,
+                status=status.status,
+                status_detail=status.status_detail,
+                pr_url=status.pr_url,
+                pr_state=status.pr_state,
+                acus_consumed=status.acus_consumed,
+            )
+            synced += 1
+        if synced:
+            self.state.save()
+        return synced
+
+    def load_history(self) -> list[dict]:
+        path = Path(self.config.history_path)
+        if not path.exists():
+            return []
+        records: list[dict] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return records
+
+    def build_report(self, *, coverage: bool = False) -> Report:
+        cov: Coverage | None = None
+        if coverage:
+            run_report = RunReport()
+            outdated = self.find_outdated(run_report)
+            cov = Coverage(checked=run_report.checked, outdated=len(outdated))
+        return build_report(
+            self.state.entries(),
+            coverage=cov,
+            history=self.load_history(),
+        )
 
     def _maybe_trigger(self, od: OutdatedDependency, *, dry_run: bool) -> TriggerResult:
         if self.state.already_triggered(od.ecosystem, od.name, od.latest_version):
@@ -157,7 +229,12 @@ class Runner:
             return TriggerResult(od, triggered=False, skipped_reason=msg)
 
         self.state.record(
-            od.ecosystem, od.name, od.latest_version, session.session_id, session.url
+            od.ecosystem,
+            od.name,
+            od.latest_version,
+            session.session_id,
+            session.url,
+            update_kind=od.update_kind.value,
         )
         return TriggerResult(
             od,

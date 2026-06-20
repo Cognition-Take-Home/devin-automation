@@ -29,6 +29,18 @@ class CreatedSession:
     status: str | None = None
 
 
+@dataclass
+class SessionStatus:
+    """Live status of a Devin session, as reported by the API."""
+
+    session_id: str
+    status: str | None = None
+    status_detail: str | None = None
+    acus_consumed: float | None = None
+    pr_url: str | None = None
+    pr_state: str | None = None
+
+
 class DevinClient:
     def __init__(
         self,
@@ -69,6 +81,43 @@ class DevinClient:
             url=data.get("url", ""),
             status=data.get("status"),
         )
+
+    def get_session(self, session_id: str) -> SessionStatus:
+        """Fetch the live status (and any PR) for a previously created session."""
+        if not self.api_key:
+            raise DevinApiError(
+                "No Devin API key configured. Set the DEVIN_API_KEY environment variable."
+            )
+        url = self._session_url(session_id)
+        data = self._transport("GET", url, self._headers(), None)
+        prs = data.get("pull_requests") or []
+        pr = self._pick_pr(prs)
+        return SessionStatus(
+            session_id=data.get("session_id", session_id),
+            status=data.get("status"),
+            status_detail=data.get("status_detail"),
+            acus_consumed=data.get("acus_consumed"),
+            pr_url=pr.get("pr_url") if pr else None,
+            pr_state=pr.get("pr_state") if pr else None,
+        )
+
+    @staticmethod
+    def _pick_pr(prs: list[dict]) -> dict | None:
+        """Prefer a merged PR, then an open one, else the first reported."""
+        if not prs:
+            return None
+        by_state = {str(p.get("pr_state", "")).lower(): p for p in prs}
+        return by_state.get("merged") or by_state.get("open") or prs[0]
+
+    def _session_url(self, session_id: str) -> str:
+        if self.api_version == "v1":
+            return f"{self.api_base}/v1/session/{session_id}"
+        if not self.org_id:
+            raise DevinApiError(
+                "Devin v3 API requires an organization id. Set DEVIN_ORG_ID or "
+                "devin.org_id in the config."
+            )
+        return f"{self.api_base}/v3/organizations/{self.org_id}/sessions/{session_id}"
 
     def _build_request(
         self,

@@ -80,10 +80,49 @@ dep-automation --target-repo-path ../superset run --dry-run
 # Create Devin sessions for outdated dependencies (needs DEVIN_API_KEY)
 export DEVIN_API_KEY=...
 dep-automation --target-repo-path ../superset run
+
+# Effectiveness report: outcomes, success rate, throughput, drift
+dep-automation report                      # from local state
+dep-automation report --sync               # refresh live status + PRs from the Devin API
+dep-automation report --sync --coverage    # also measure current drift
+dep-automation report --json               # machine-readable
+dep-automation report --markdown           # Markdown (used for the CI run summary)
 ```
 
 Configuration lives in [`config.yaml`](config.yaml) (target repo, manifests, trigger
 policy, ignore list, max sessions per run, Devin options).
+
+## Analytics & reporting — "how do I know it's working?"
+
+The system records every upgrade it starts in [`state/processed.json`](state/processed.json)
+(package, version, update size, the Devin session, and — after a `--sync` — that session's
+live status, any PR it opened, and ACUs consumed). Each run also appends a line to
+`state/history.jsonl` (checked / outdated / triggered / errors). The `report` command turns
+this into the signals an engineering leader cares about:
+
+- **Outcomes** of every triggered upgrade — *PR merged*, *PR open (awaiting review)*,
+  *active*, *blocked (needs input)*, *ended without a PR*, or *unknown (not synced)*.
+- **Success rate** — share of *finished* sessions that produced a PR.
+- **Drift / coverage** (`--coverage`) — how many tracked deps are currently behind; the
+  backlog the system is working down.
+- **Throughput over time** — sessions triggered and drift per run, from the history log.
+- **Cost** — total ACUs consumed.
+
+In CI the workflow runs `report --sync --coverage` every run and publishes the Markdown to
+the **GitHub Actions run summary** (via `$GITHUB_STEP_SUMMARY`), so a leader just opens the
+latest run to see the dashboard. Example:
+
+```
+Upgrades tracked: 3  |  active: 1  |  completed: 2
+PRs: 1 open, 0 merged  |  success rate: 50.0%  |  ACUs: 0.0
+
+By outcome:
+  PR open (review)       1
+  active                 1
+  ended, no PR           1
+
+Across 3 run(s): checked 952, outdated 240, triggered 3, errors 0
+```
 
 ## Configuration in CI
 
