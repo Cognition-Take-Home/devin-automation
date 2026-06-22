@@ -6,20 +6,87 @@ repository, driven by the [Devin API](https://docs.devin.ai/api-reference/v1/ses
 
 Each night it hands Devin a short list of the libraries superset uses most heavily and
 asks it to deep-dive **one** of them: study how the repo actually uses the library, compare
-that against the library's documentation, and make small, safe improvements to that usage.
-It is not a version bumper — it improves how existing dependencies are used. A small,
-low-risk version bump is allowed **only** when a newer version unlocks a clearly better
-usage; libraries that would need a big migration to improve are skipped (out of scope).
+that against the library's docs, and make small, safe improvements to that usage — or open
+no PR if nothing is worthwhile. It is not a version bumper; see
+[What it does](#what-it-does) below.
 
-## Why usage optimization (not version bumping)
+## Running it
+
+The same CLI runs three things, all shown below:
+
+| Command | What it does |
+| --- | --- |
+| `shortlist` | Show the ranked candidate libraries this run would consider (no session) |
+| `optimize [--dry-run]` | The nightly run: shortlist + create **one** Devin session (`--dry-run` previews only) |
+| `report [--sync] [--coverage]` | Effectiveness metrics (outcomes, success rate, throughput, coverage, rework) |
+
+`--dry-run` and `shortlist`/`report` need **no** API key. Actually creating a session
+(`optimize`, `single … --go`) needs `DEVIN_API_KEY` (and `DEVIN_ORG_ID` for the v3 API).
+
+The automation reads the target repo (superset) from a local checkout to measure usage; it
+never pushes to superset — Devin opens the PRs.
+
+### With Docker (recommended)
+
+No Python or ripgrep setup needed — the image bundles everything. Requires Docker (on
+macOS/Windows that means **Docker Desktop must be running** — `docker info` should succeed).
+
+```bash
+export DEVIN_API_KEY=...  DEVIN_ORG_ID=org-...
+# SUPERSET_PATH defaults to ../superset; override if your checkout is elsewhere.
+export SUPERSET_PATH=../superset
+
+docker compose run --rm automation shortlist           # show candidate ranking
+docker compose run --rm automation optimize --dry-run  # preview the nightly run
+docker compose run --rm automation optimize            # create one Devin session
+docker compose run --rm automation report --coverage   # effectiveness report
+
+docker compose run --rm single cryptography            # ad-hoc one dep (dry run)
+docker compose run --rm single cryptography --go       # ad-hoc one dep (create session)
+
+docker compose up dashboard                             # marimo UI at http://localhost:2718
+```
+
+Compose builds the image on first use. If you upgraded the code, **force a rebuild** so you
+don't run a cached older image: `docker compose build` (or add `--build` to a `run`).
+The target repo is mounted read-only; `state/` is mounted so rotation state and run history
+persist across runs.
+
+### Without Docker (native Python)
+
+**Prerequisites:** Python 3.10+ and [**ripgrep**](https://github.com/BurntSushi/ripgrep)
+(`rg`) on your PATH — the usage scan shells out to it. Install ripgrep with
+`brew install ripgrep` (macOS) or `apt-get install ripgrep` (Debian/Ubuntu).
+
+```bash
+pip install -e .                                       # add "[dashboard]" for the marimo UI
+export DEVIN_API_KEY=...  DEVIN_ORG_ID=org-...         # only needed to create a session
+
+dep-automation --target-repo-path ../superset shortlist
+dep-automation --target-repo-path ../superset optimize --dry-run
+dep-automation --target-repo-path ../superset optimize
+dep-automation --target-repo-path ../superset report --sync --coverage
+
+# Ad-hoc: optimize one named library now (positional arg; pypi or npm auto-detected)
+python run_single.py cryptography                      # dry run (creates nothing)
+python run_single.py cryptography --go                 # create one session
+
+# Dashboard (needs the [dashboard] extra)
+marimo run dashboard.py                                # http://localhost:2718
+```
+
+`report` extras: `--json` / `--markdown` switch the format; `--sync` refreshes live session
+status + PRs from the Devin API; `--coverage` measures how much of the library set has been
+optimized. The dashboard reads its config path from `$DEP_AUTOMATION_CONFIG` (default
+`config.yaml`).
+
+## What it does
 
 Bumping versions is a commodity (Dependabot/Renovate) and drags you into dependency
 resolution, lockfile conflicts, and coupled-package families. "Use the libraries you
 already have *better*" plays to Devin's strengths — reading code and docs and making
 judgment calls — and each night produces at most one small, self-contained, reviewable PR
-with no cross-branch coupling.
-
-Each session is asked to:
+with no cross-branch coupling. Each session is asked to:
 
 1. **Pick one** library from the shortlist where it can find the most genuine, low-risk
    improvement.
@@ -70,62 +137,13 @@ manifests (pyproject.toml, package.json)
   automation rotates across the whole library set over time instead of re-poking the same
   few. The chosen package is resolved from the PR's `opt(<package>): …` title on sync.
 
-## Triggering
+## Triggering (nightly)
 
 This runs **nightly** via GitHub Actions' built-in `schedule:` cron (no always-on VM — the
 scheduler spins up an ephemeral runner, runs the CLI for a few minutes, then tears it
-down). It also supports:
-
-- `workflow_dispatch` — manual runs (with a dry-run toggle).
-- `repository_dispatch` (type `optimize-now`) — kick off a run on demand.
-
-See [`.github/workflows/dependency-automation.yml`](.github/workflows/dependency-automation.yml).
-
-## Usage
-
-**Prerequisites:** Python 3.10+ and [**ripgrep**](https://github.com/BurntSushi/ripgrep)
-(`rg`) on your PATH — the usage scan shells out to it. Install with `brew install ripgrep`
-(macOS) or `apt-get install ripgrep` (Debian/Ubuntu). The Docker image bundles it, so
-running via Docker needs no separate install.
-
-```bash
-pip install -e .
-
-# List the top-level dependencies discovered in the target repo
-dep-automation --target-repo-path ../superset list
-
-# Show the candidate ranking that would be put in front of Devin (no session)
-dep-automation --target-repo-path ../superset shortlist
-
-# Preview the nightly run without creating a session
-dep-automation --target-repo-path ../superset optimize --dry-run
-
-# Run the nightly optimization: shortlist + create ONE Devin session (needs DEVIN_API_KEY)
-export DEVIN_API_KEY=...
-dep-automation --target-repo-path ../superset optimize
-
-# Effectiveness report: outcomes, success rate, throughput, coverage
-dep-automation report                      # from local state
-dep-automation report --sync               # refresh live status + PRs from the Devin API
-dep-automation report --sync --coverage    # also measure coverage of the library set
-dep-automation report --json               # machine-readable
-dep-automation report --markdown           # Markdown (used for the CI run summary)
-```
-
-Configuration lives in [`config.yaml`](config.yaml) (target repo, manifests, shortlist
-size, cooldown, per-ecosystem usage paths, ignore/only lists, Devin options).
-
-### Ad-hoc single dependency
-
-To optimize one specific library on demand (instead of the nightly shortlist), use the
-hardcoded helper script — the package is a positional argument:
-
-```bash
-export DEVIN_API_KEY=...  DEVIN_ORG_ID=org-...
-python run_single.py cryptography          # dry run (creates nothing)
-python run_single.py cryptography --go      # create ONE optimization session
-python run_single.py react-window --go      # works for npm deps too
-```
+down). It also supports `workflow_dispatch` (manual runs, with a dry-run toggle) and
+`repository_dispatch` (type `optimize-now`, to kick off a run on demand). See
+[`.github/workflows/dependency-automation.yml`](.github/workflows/dependency-automation.yml).
 
 ## Analytics & reporting — "how do I know it's working?"
 
@@ -168,33 +186,18 @@ By outcome:
 Across 4 run(s): shortlisted 20, triggered 4, errors 0
 ```
 
-### Interactive dashboard (marimo)
+The [marimo](https://marimo.io) dashboard ([`dashboard.py`](dashboard.py)) renders the same
+metrics interactively — KPI cards, an outcomes bar chart, a throughput line chart, and a
+sortable sessions table, with a reactive toggle to sync live data. Launch it with
+`docker compose up dashboard` or `marimo run dashboard.py` (see [Running it](#running-it)).
 
-For a richer, clickable view there's a [marimo](https://marimo.io) notebook,
-[`dashboard.py`](dashboard.py), that renders the same metrics as KPI cards, an outcomes bar
-chart, a throughput line chart, and a sortable sessions table — with a reactive toggle to
-sync live data:
+## Configuration
 
-```bash
-python -m venv .venv && source .venv/bin/activate   # install into a clean env
-pip install -e ".[dashboard]"
-marimo run dashboard.py     # read-only app   (or: marimo edit dashboard.py)
-```
+Behavior is configured in [`config.yaml`](config.yaml): target repo, manifests, shortlist
+size, `cooldown_days`, `allow_safe_bumps`, per-ecosystem usage paths, ignore/only lists, and
+Devin options.
 
-It reads the config path from `$DEP_AUTOMATION_CONFIG` (default `config.yaml`). Flip the
-**Use sample data** switch to populate every chart and table with synthetic demo data (no
-state or API access required) — handy for screenshots and walkthroughs.
-
-> **Note:** marimo pulls in a recent `starlette`. If you install into an environment that
-> already has an older `fastapi` (e.g. `fastapi 0.104.1`, which pins `starlette<0.28.0`),
-> pip prints a resolver warning like *"fastapi … requires starlette<0.28.0 … but you have
-> starlette 1.3.1 which is incompatible."* This project does **not** use `fastapi`/`starlette`
-> directly, so the warning is harmless — the dashboard still runs. Installing into a clean
-> virtualenv (as above) avoids it entirely.
-
-## Configuration in CI
-
-The workflow needs:
+The GitHub Actions workflow additionally needs:
 
 - `DEVIN_API_KEY` *(secret)* — a Devin `cog_` service-user key / PAT
   (Settings → Secrets → Actions).
@@ -206,34 +209,6 @@ The workflow needs:
 The Devin client uses the current **v3** org-scoped API
 (`POST /v3/organizations/{org_id}/sessions`) by default; set `devin.api_version: v1` to use
 the legacy endpoint.
-
-## Docker
-
-The whole app runs in a container — see [`Dockerfile`](Dockerfile) and
-[`docker-compose.yml`](docker-compose.yml). The image bundles the CLI, the marimo
-dashboard, and `git`/`ripgrep`/`gh` (ripgrep powers the usage scan; gh powers the rework
-metric). The target repo (superset) is mounted read-only; `state/` is mounted so the
-rotation state and run history persist across runs.
-
-```bash
-export DEVIN_API_KEY=...  DEVIN_ORG_ID=org-...
-# SUPERSET_PATH defaults to ../superset; override if your checkout is elsewhere.
-
-docker compose run --rm automation shortlist           # show candidate ranking
-docker compose run --rm automation optimize --dry-run  # preview the nightly run
-docker compose run --rm automation optimize            # create one Devin session
-docker compose run --rm single cryptography --go       # ad-hoc, one named dependency
-docker compose up dashboard                             # marimo UI at http://localhost:2718
-```
-
-Or without compose:
-
-```bash
-docker build -t devin-automation .
-docker run --rm -e DEVIN_API_KEY -e DEVIN_ORG_ID \
-  -v "$PWD/state:/app/state" -v "/path/to/superset:/superset:ro" \
-  devin-automation --target-repo-path /superset shortlist
-```
 
 ## Development
 
