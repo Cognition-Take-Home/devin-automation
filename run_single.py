@@ -25,7 +25,8 @@ from dep_automation.versioning import classify_update, satisfies
 
 # --- hardcoded knobs ---------------------------------------------------------
 REPO = "Cognition-Take-Home/superset"
-REPO_PATH = os.path.expanduser("~/repos/superset")
+# Local checkout of the target repo; override with TARGET_REPO_PATH (e.g. in Docker).
+REPO_PATH = os.environ.get("TARGET_REPO_PATH") or os.path.expanduser("~/repos/superset")
 # Where to look for each ecosystem's top-level dependency list.
 MANIFESTS = {
     Ecosystem.PYPI: "pyproject.toml",

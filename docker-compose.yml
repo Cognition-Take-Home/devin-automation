@@ -4,6 +4,8 @@
 #   docker compose run --rm automation check          # list outdated deps
 #   docker compose run --rm automation run --dry-run  # preview sessions
 #   docker compose run --rm automation run            # create Devin sessions
+#   docker compose run --rm single cryptography        # one-off, dry run
+#   docker compose run --rm single cryptography --go   # one-off, create session
 #   docker compose up dashboard                        # marimo UI at http://localhost:2718
 #
 # By default it reads the target repo from ../superset (override with SUPERSET_PATH).
@@ -19,6 +21,21 @@ services:
       - ./state:/app/state                       # persist de-dup state + run history
       - ${SUPERSET_PATH:-../superset}:/superset:ro
     command: ["check"]
+
+  single:
+    build: .
+    image: devin-automation
+    environment:
+      DEVIN_API_KEY: ${DEVIN_API_KEY:-}
+      DEVIN_ORG_ID: ${DEVIN_ORG_ID:-}
+      TARGET_REPO_PATH: /superset
+    volumes:
+      - ./state:/app/state
+      - ${SUPERSET_PATH:-../superset}:/superset:ro
+    entrypoint: ["python", "run_single.py"]
+    # Pass the package (and optional --go) as args, e.g.:
+    #   docker compose run --rm single cryptography --go
+    command: ["cryptography"]
 
   dashboard:
     build: .
