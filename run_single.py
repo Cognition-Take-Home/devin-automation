@@ -22,7 +22,7 @@ from dep_automation.devin import DevinClient
 from dep_automation.manifests import parse_manifest
 from dep_automation.models import Candidate, Ecosystem
 from dep_automation.prompts import build_optimization_prompt, build_optimization_title
-from dep_automation.usage import UsageScanner
+from dep_automation.usage import RipgrepNotFound, UsageScanner
 
 # --- hardcoded knobs ---------------------------------------------------------
 REPO = "Cognition-Take-Home/superset"
@@ -62,7 +62,11 @@ def main() -> int:
         target_repo_path=REPO_PATH,
         usage_paths=USAGE_PATHS,
     )
-    usage = UsageScanner(config).count(dep)
+    try:
+        usage = UsageScanner(config).count(dep)
+    except RipgrepNotFound as exc:
+        print(f"error: {exc}")
+        return 2
     candidate = Candidate(dependency=dep, usage=usage)
     print(f"[{dep.ecosystem.value}] {args.package}: {dep.constraint!r} (~{usage} usages)")
 

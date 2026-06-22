@@ -17,9 +17,21 @@ The command runner is injectable for tests.
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 
 from .models import Dependency, Ecosystem
+
+
+class RipgrepNotFound(RuntimeError):
+    """Raised when the ``rg`` (ripgrep) binary the usage scan relies on is missing."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "ripgrep ('rg') is required to measure dependency usage but was not found on "
+            "PATH. Install it (macOS: 'brew install ripgrep'; Debian/Ubuntu: "
+            "'apt-get install ripgrep'), or run the app via Docker, which bundles it."
+        )
 
 
 def search_patterns(dep: Dependency) -> list[str]:
@@ -35,6 +47,8 @@ def search_patterns(dep: Dependency) -> list[str]:
 
 def _rg_runner(patterns: list[str], paths: list[str], cwd: str) -> str:
     """Default runner: ``rg --count-matches`` over the paths, returning ``path:count`` lines."""
+    if shutil.which("rg") is None:
+        raise RipgrepNotFound
     args = ["rg", "--count-matches", "--no-messages"]
     for pat in patterns:
         args += ["-e", pat]

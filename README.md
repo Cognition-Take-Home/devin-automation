@@ -83,6 +83,11 @@ See [`.github/workflows/dependency-automation.yml`](.github/workflows/dependency
 
 ## Usage
 
+**Prerequisites:** Python 3.10+ and [**ripgrep**](https://github.com/BurntSushi/ripgrep)
+(`rg`) on your PATH — the usage scan shells out to it. Install with `brew install ripgrep`
+(macOS) or `apt-get install ripgrep` (Debian/Ubuntu). The Docker image bundles it, so
+running via Docker needs no separate install.
+
 ```bash
 pip install -e .
 
