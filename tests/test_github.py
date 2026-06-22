@@ -2,6 +2,7 @@ import json
 
 from dep_automation.github import (
     GitHubClient,
+    parse_opt_title,
     parse_pr_url,
     summarize_commits,
 )
@@ -66,3 +67,28 @@ def test_client_commit_stats_uses_runner():
 def test_client_commit_stats_bad_url_returns_none():
     client = GitHubClient(runner=lambda args: "[]")
     assert client.commit_stats("nope") is None
+
+
+def test_parse_opt_title():
+    assert parse_opt_title("opt(cryptography): drop default_backend()") == "cryptography"
+    assert parse_opt_title("OPT(react): use hooks") == "react"
+    assert parse_opt_title("opt(@deck.gl/core): tidy") == "@deck.gl/core"
+    assert parse_opt_title("chore: unrelated") is None
+    assert parse_opt_title("") is None
+
+
+def test_client_pr_title_uses_runner():
+    captured = {}
+
+    def runner(args):
+        captured["args"] = args
+        return "opt(click): adopt rich help\n"
+
+    client = GitHubClient(runner=runner)
+    assert client.pr_title("https://github.com/o/r/pull/12") == "opt(click): adopt rich help"
+    assert captured["args"][:2] == ["api", "repos/o/r/pulls/12"]
+
+
+def test_client_pr_title_bad_url_returns_none():
+    client = GitHubClient(runner=lambda args: "x")
+    assert client.pr_title("nope") is None

@@ -3,35 +3,35 @@ from pathlib import Path
 from dep_automation.config import Config, ManifestSpec
 from dep_automation.devin import CreatedSession, SessionStatus
 from dep_automation.github import CommitStats
-from dep_automation.models import Ecosystem
 from dep_automation.runner import Runner
 from dep_automation.state import State
 
 FIX = Path(__file__).parent / "fixtures"
 
-# Latest versions returned by the fake registry, keyed by name.
-LATEST = {
-    # pyproject
-    "celery": "5.9.9",  # in range (<6.0.0) -> not flagged under out-of-range
-    "click": "8.4.0",  # equal -> not flagged
-    "colorama": "0.4.6",  # no constraint -> in range
-    "pandas": "2.5.0",  # > <2.4 cap -> out of range -> flagged (major-ish)
-    "gunicorn": "26.1.0",  # > <26 cap -> out of range -> flagged
-    # package.json
-    "@braintree/sanitize-url": "7.9.0",  # within ^7.1.2 -> in range
-    "@deck.gl/aggregation-layers": "9.5.0",  # outside ~9.2.5 -> flagged
-    "react": "19.0.0",  # exact 18.3.1 -> flagged
-    "typescript": "5.9.0",  # within ^5.4.0 -> in range
-    "eslint": "9.5.0",  # outside <9.0.0 -> flagged
+# Fake usage counts keyed by lowercased dependency name. Higher = more used.
+USAGE = {
+    "pandas": 500,
+    "click": 400,
+    "gunicorn": 300,
+    "celery": 200,
+    "colorama": 100,
+    "react": 90,
+    "typescript": 80,
+    "eslint": 70,
+    "@braintree/sanitize-url": 60,
+    "@deck.gl/aggregation-layers": 50,
 }
 
 
-class FakeRegistry:
+class FakeUsage:
     def __init__(self, table):
         self.table = table
 
-    def latest_version(self, ecosystem: Ecosystem, name: str) -> str:
-        return self.table[name]
+    def count(self, dep):
+        return self.table.get(dep.name.lower(), 0)
+
+    def counts(self, deps):
+        return {(d.ecosystem.value, d.name.lower()): self.count(d) for d in deps}
 
 
 class FakeDevin:
@@ -42,21 +42,29 @@ class FakeDevin:
     def create_session(self, prompt, *, title=None, tags=None, idempotent=True, max_acu_limit=None):
         self.calls.append({"prompt": prompt, "title": title, "tags": tags})
         idx = len(self.calls)
-        return CreatedSession(session_id=f"devin-{idx}", url=f"https://app.devin.ai/sessions/{idx}")
+        return CreatedSession(
+            session_id=f"devin-{idx}", url=f"https://app.devin.ai/sessions/{idx}"
+        )
 
     def get_session(self, session_id):
         return self.statuses.get(session_id, SessionStatus(session_id=session_id))
 
 
 class FakeGitHub:
-    def __init__(self, stats=None):
+    def __init__(self, title=None, stats=None):
+        self.title = title
         self.stats = stats or CommitStats(
             total_commits=2, followup_commits=1, human_followup_commits=1
         )
-        self.calls = []
+        self.title_calls = []
+        self.stats_calls = []
+
+    def pr_title(self, pr_url):
+        self.title_calls.append(pr_url)
+        return self.title
 
     def commit_stats(self, pr_url):
-        self.calls.append(pr_url)
+        self.stats_calls.append(pr_url)
         return self.stats
 
 
@@ -71,6 +79,7 @@ def make_config(tmp_path, **overrides) -> Config:
         ],
         state_path=str(tmp_path / "state.json"),
         history_path=str(tmp_path / "history.jsonl"),
+        shortlist_size=3,
         ignore=[],
     )
     for k, v in overrides.items():
@@ -78,126 +87,73 @@ def make_config(tmp_path, **overrides) -> Config:
     return cfg
 
 
-def make_runner(tmp_path, **cfg_overrides):
+def make_runner(tmp_path, devin=None, github=None, **cfg_overrides):
     cfg = make_config(tmp_path, **cfg_overrides)
-    devin = FakeDevin()
+    devin = devin or FakeDevin()
     runner = Runner(
         cfg,
-        registry=FakeRegistry(LATEST),
         devin=devin,
         state=State.load(cfg.state_path),
+        github=github or FakeGitHub(),
+        usage=FakeUsage(USAGE),
     )
     return runner, devin
 
 
-def test_find_outdated_out_of_range(tmp_path):
+def test_shortlist_ranks_by_usage(tmp_path):
     runner, _ = make_runner(tmp_path)
-    outdated = {od.name for od in runner.find_outdated()}
-    assert outdated == {"pandas", "gunicorn", "@deck.gl/aggregation-layers", "react", "eslint"}
+    picked = [c.name for c in runner.shortlist()]
+    assert picked == ["pandas", "click", "gunicorn"]
 
 
-def test_any_newer_policy_flags_more(tmp_path):
-    runner, _ = make_runner(tmp_path, trigger_policy="any-newer")
-    outdated = {od.name for od in runner.find_outdated()}
-    # celery (5.3.6 -> 5.9.9) and others now count as newer
-    assert "celery" in outdated
-    assert "@braintree/sanitize-url" in outdated
-
-
-def test_ignore_filter(tmp_path):
-    runner, _ = make_runner(tmp_path, ignore=["pandas", "react"])
-    outdated = {od.name for od in runner.find_outdated()}
-    assert "pandas" not in outdated
-    assert "react" not in outdated
-
-
-def test_only_filter(tmp_path):
-    runner, _ = make_runner(tmp_path, only=["gunicorn"])
-    outdated = {od.name for od in runner.find_outdated()}
-    assert outdated == {"gunicorn"}
-
-
-def test_run_triggers_sessions(tmp_path):
+def test_optimize_triggers_one_session(tmp_path):
     runner, devin = make_runner(tmp_path)
-    report = runner.run()
-    assert len(report.triggered) == 5
-    assert len(devin.calls) == 5
-    # prompt mentions research and not forcing
-    assert any("Research first" in c["prompt"] for c in devin.calls)
-    assert any("do NOT force" in c["prompt"] for c in devin.calls)
+    result = runner.optimize()
+    assert result.triggered is True
+    assert len(devin.calls) == 1
+    # the prompt is a usage-optimization prompt, not a version bump
+    prompt = devin.calls[0]["prompt"]
+    assert "NOT a version upgrade" in prompt
+    assert "It is OK to find nothing" in prompt
+    assert len(result.candidates) == 3
 
 
-def test_run_respects_max_sessions(tmp_path):
-    runner, devin = make_runner(tmp_path, max_sessions_per_run=2)
-    report = runner.run()
-    assert len(report.triggered) == 2
-    assert len(devin.calls) == 2
-    skipped = [r for r in report.results if not r.triggered]
-    assert any("max_sessions_per_run" in (r.skipped_reason or "") for r in skipped)
-
-
-def test_dedup_skips_already_triggered(tmp_path):
+def test_optimize_dry_run_creates_no_session(tmp_path):
     runner, devin = make_runner(tmp_path)
-    runner.run()
-    assert len(devin.calls) == 5
-
-    # Second run with same state + same latest versions should trigger nothing new.
-    runner2, devin2 = make_runner(tmp_path)
-    report2 = runner2.run()
-    assert len(devin2.calls) == 0
-    assert all(not r.triggered for r in report2.results)
+    result = runner.optimize(dry_run=True)
+    assert result.triggered is False
+    assert devin.calls == []
+    assert result.skipped_reason == "dry-run"
 
 
-def test_dry_run_creates_no_sessions(tmp_path):
-    runner, devin = make_runner(tmp_path)
-    report = runner.run(dry_run=True)
-    assert len(devin.calls) == 0
-    assert all(not r.triggered for r in report.results)
-
-
-def test_registry_error_recorded(tmp_path):
-    cfg = make_config(tmp_path)
-
-    class BrokenRegistry:
-        def latest_version(self, ecosystem, name):
-            from dep_automation.registries import RegistryError
-
-            raise RegistryError("network down")
-
-    runner = Runner(
-        cfg, registry=BrokenRegistry(), devin=FakeDevin(), state=State.load(cfg.state_path)
-    )
-    report = runner.run()
-    assert report.errors
-    assert len(report.triggered) == 0
-
-
-def test_requires_manifest_change_flag(tmp_path):
+def test_cooldown_rotates_candidates(tmp_path):
     runner, _ = make_runner(tmp_path)
-    by_name = {od.name: od for od in runner.find_outdated()}
-    assert by_name["pandas"].requires_manifest_change is True
+    first = {c.name for c in runner.shortlist()}
+    runner.optimize()  # records the shortlist as considered
+
+    runner2, _ = make_runner(tmp_path)  # reloads persisted state
+    second = {c.name for c in runner2.shortlist()}
+    assert first.isdisjoint(second)  # cooldown excludes the just-considered set
 
 
-def test_run_appends_history(tmp_path):
+def test_cooldown_zero_disables_rotation(tmp_path):
+    runner, _ = make_runner(tmp_path, cooldown_days=0)
+    runner.optimize()
+    runner2, _ = make_runner(tmp_path, cooldown_days=0)
+    # with no cooldown the most-used set is offered again
+    assert [c.name for c in runner2.shortlist()] == ["pandas", "click", "gunicorn"]
+
+
+def test_optimize_appends_history(tmp_path):
     runner, _ = make_runner(tmp_path)
-    runner.run()
-    runner.run()  # second run: dedup, triggers nothing but still records a run
+    runner.optimize()
     history = runner.load_history()
-    assert len(history) == 2
-    assert history[0]["triggered"] == 5
-    assert history[1]["triggered"] == 0
-    assert history[0]["checked"] == history[1]["checked"]
+    assert len(history) == 1
+    assert history[0]["triggered"] == 1
+    assert history[0]["shortlisted"] == 3
 
 
-def test_run_records_update_kind(tmp_path):
-    runner, _ = make_runner(tmp_path)
-    runner.run()
-    kinds = {e.name: e.update_kind for e in runner.state.entries()}
-    assert kinds["gunicorn"] == "major"
-
-
-def test_sync_statuses_updates_outcomes(tmp_path):
-    cfg = make_config(tmp_path)
+def test_sync_resolves_choice_and_commits(tmp_path):
     devin = FakeDevin(
         statuses={
             "devin-1": SessionStatus(
@@ -209,29 +165,50 @@ def test_sync_statuses_updates_outcomes(tmp_path):
             )
         }
     )
-    github = FakeGitHub()
-    runner = Runner(
-        cfg,
-        registry=FakeRegistry(LATEST),
-        devin=devin,
-        state=State.load(cfg.state_path),
-        github=github,
-    )
-    runner.run()
+    github = FakeGitHub(title="opt(pandas): use pyarrow dtypes")
+    runner, _ = make_runner(tmp_path, devin=devin, github=github)
+    runner.optimize()
+
     synced = runner.sync_statuses()
-    assert synced == 5
-    entry = next(e for e in runner.state.entries() if e.session_id == "devin-1")
-    assert entry.pr_url == "https://github.com/acme/target/pull/9"
+    assert synced == 1
+
+    entry = runner.state.sessions()[0]
+    assert entry.pr_url.endswith("/pull/9")
     assert entry.acus_consumed == 3.5
-    # commit stats fetched only for the entry that has a PR
-    assert github.calls == ["https://github.com/acme/target/pull/9"]
+    assert entry.chosen_name == "pandas"
+    assert entry.chosen_ecosystem == "pypi"
     assert entry.followup_commits == 1
+    # the chosen dep is now counted as optimized for coverage
+    assert runner.state.optimized_count() == 1
+
+
+def test_sync_without_pr_does_not_resolve_choice(tmp_path):
+    devin = FakeDevin(
+        statuses={"devin-1": SessionStatus(session_id="devin-1", status="finished")}
+    )
+    github = FakeGitHub(title="opt(pandas): x")
+    runner, _ = make_runner(tmp_path, devin=devin, github=github)
+    runner.optimize()
+    runner.sync_statuses()
+    assert github.title_calls == []  # no PR -> no title lookup
+    assert runner.state.optimized_count() == 0
 
 
 def test_build_report_with_coverage(tmp_path):
     runner, _ = make_runner(tmp_path)
-    runner.run()
+    runner.optimize()
     report = runner.build_report(coverage=True)
-    assert report.total == 5
+    assert report.total == 1
     assert report.coverage is not None
-    assert report.coverage.outdated == 5
+    assert report.coverage.total == 10  # all deps in the fixtures
+    assert report.coverage.considered == 3
+
+
+def test_ignore_filter(tmp_path):
+    runner, _ = make_runner(tmp_path, ignore=["pandas"])
+    assert "pandas" not in {c.name for c in runner.shortlist()}
+
+
+def test_only_filter(tmp_path):
+    runner, _ = make_runner(tmp_path, only=["gunicorn"])
+    assert [c.name for c in runner.shortlist()] == ["gunicorn"]

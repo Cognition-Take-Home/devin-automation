@@ -13,15 +13,6 @@ class Ecosystem(StrEnum):
     NPM = "npm"
 
 
-class UpdateKind(StrEnum):
-    """Semantic size of an available update."""
-
-    MAJOR = "major"
-    MINOR = "minor"
-    PATCH = "patch"
-    UNKNOWN = "unknown"
-
-
 @dataclass(frozen=True)
 class Dependency:
     """A single top-level dependency declared in a manifest."""
@@ -30,22 +21,14 @@ class Dependency:
     ecosystem: Ecosystem
     constraint: str
     manifest: str
-    # The representative current version expressed by the constraint (anchor of a
-    # caret/tilde range, a pin, or the highest lower bound). May be ``None`` when the
-    # constraint has no concrete version (e.g. an unbounded ``*``).
-    current_version: str | None = None
 
 
 @dataclass(frozen=True)
-class OutdatedDependency:
-    """A dependency whose latest published version warrants attention."""
+class Candidate:
+    """A dependency considered for optimization, with how heavily the repo uses it."""
 
     dependency: Dependency
-    latest_version: str
-    update_kind: UpdateKind
-    # ``True`` when the latest version is *not* permitted by the current constraint and
-    # therefore requires a manifest edit (the high-value case for a Devin upgrade).
-    requires_manifest_change: bool
+    usage: int
 
     @property
     def name(self) -> str:
@@ -57,25 +40,12 @@ class OutdatedDependency:
 
 
 @dataclass
-class TriggerResult:
-    """Outcome of attempting to start a Devin session for one dependency."""
+class OptimizeResult:
+    """Outcome of a single nightly optimization run."""
 
-    dependency: OutdatedDependency
-    triggered: bool
-    skipped_reason: str | None = None
+    candidates: list[Candidate] = field(default_factory=list)
+    triggered: bool = False
     session_id: str | None = None
     session_url: str | None = None
-
-
-@dataclass
-class RunReport:
-    """Summary of a single automation run."""
-
-    checked: int = 0
-    outdated: list[OutdatedDependency] = field(default_factory=list)
-    results: list[TriggerResult] = field(default_factory=list)
+    skipped_reason: str | None = None
     errors: list[str] = field(default_factory=list)
-
-    @property
-    def triggered(self) -> list[TriggerResult]:
-        return [r for r in self.results if r.triggered]

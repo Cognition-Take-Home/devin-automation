@@ -4,12 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dep-automation"
-version = "0.1.0"
-description = "Research-led dependency-management automation driven by the Devin API"
+version = "0.2.0"
+description = "Library usage-optimization automation driven by the Devin API"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "packaging>=23.0",
     "PyYAML>=6.0",
 ]
 

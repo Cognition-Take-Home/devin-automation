@@ -1,34 +1,34 @@
-name: Dependency automation
+name: Dependency optimization
 
 # Triggering strategy
 # -------------------
-# PyPI and npm do not offer consumer-facing push webhooks for third-party packages
-# (you can only subscribe to packages you own), so a true "package released" event is
-# not available here. We therefore POLL on a schedule, and also expose:
+# This automation runs nightly: each run hands Devin a shortlist of the repo's most-used
+# libraries and asks it to deep-dive ONE and improve how the repo uses it (or open no PR
+# if nothing is worthwhile). GitHub Actions' built-in scheduler is the cron. We also
+# expose:
 #   * workflow_dispatch    - manual runs (with an optional dry-run toggle)
-#   * repository_dispatch  - so any external release-notification system you wire up
-#                            (e.g. a release watcher) can push an event to trigger a run
+#   * repository_dispatch  - so an external trigger can kick off a run on demand
 on:
   schedule:
-    - cron: "0 7 * * 1" # every Monday 07:00 UTC
+    - cron: "0 7 * * *" # nightly at 07:00 UTC
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Discover and report without creating Devin sessions"
+        description: "Shortlist and report without creating a Devin session"
         type: boolean
         default: true
   repository_dispatch:
-    types: [dependency-release]
+    types: [optimize-now]
 
 permissions:
-  contents: write # to commit the de-dup state file back to this repo
+  contents: write # to commit the state file back to this repo
 
 concurrency:
-  group: dependency-automation
+  group: dependency-optimization
   cancel-in-progress: false
 
 jobs:
-  upgrade:
+  optimize:
     runs-on: ubuntu-latest
     env:
       DEVIN_API_KEY: ${{ secrets.DEVIN_API_KEY }}
@@ -56,27 +56,27 @@ jobs:
         working-directory: automation
         run: pip install -e .
 
-      - name: Check outdated dependencies
+      - name: Show optimization shortlist
         working-directory: automation
         run: |
-          dep-automation --target-repo-path "${GITHUB_WORKSPACE}/superset" check
+          dep-automation --target-repo-path "${GITHUB_WORKSPACE}/superset" shortlist
 
-      - name: Run automation
+      - name: Run optimization
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run == false }}
         working-directory: automation
         run: |
-          dep-automation --target-repo-path "${GITHUB_WORKSPACE}/superset" run
+          dep-automation --target-repo-path "${GITHUB_WORKSPACE}/superset" optimize
 
       - name: Dry run (workflow_dispatch default)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
         working-directory: automation
         run: |
-          dep-automation --target-repo-path "${GITHUB_WORKSPACE}/superset" run --dry-run
+          dep-automation --target-repo-path "${GITHUB_WORKSPACE}/superset" optimize --dry-run
 
       - name: Effectiveness report
         # Always runs (even on dry runs) so the Actions run summary shows the current
         # state of the system. --sync refreshes live session status + PRs from the API;
-        # --coverage measures how many tracked deps are currently behind.
+        # --coverage measures how much of the library set has been optimized.
         working-directory: automation
         run: |
           dep-automation --target-repo-path "${GITHUB_WORKSPACE}/superset" \
@@ -90,7 +90,7 @@ jobs:
             git config user.name "devin-dependency-automation[bot]"
             git config user.email "devin-dependency-automation[bot]@users.noreply.github.com"
             git add state/
-            git commit -m "chore: update dependency-automation state"
+            git commit -m "chore: update dependency-optimization state"
             git push
           else
             echo "No state changes to commit."

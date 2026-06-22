@@ -1,4 +1,4 @@
-"""Marimo dashboard for the dependency-automation effectiveness metrics.
+"""Marimo dashboard for the library usage-optimization effectiveness metrics.
 
 Run it:
 
@@ -33,7 +33,7 @@ def _():
 @app.cell
 def _(mo):
     sync = mo.ui.checkbox(label="Sync live status + PR commits from APIs")
-    coverage = mo.ui.checkbox(label="Compute current drift (slower)", value=True)
+    coverage = mo.ui.checkbox(label="Compute coverage (slower)", value=True)
     mo.hstack([sync, coverage], justify="start")
     return coverage, sync
 
@@ -67,7 +67,7 @@ def _(data, fmt_pct, mo):
         return mo.stat(value=value, label=label)
 
     cards = [
-        stat("Upgrades tracked", t["tracked_upgrades"]),
+        stat("Optimization sessions", t["sessions"]),
         stat("Active", t["active"]),
         stat("PRs open", t["prs_open"]),
         stat("PRs merged", t["prs_merged"]),
@@ -75,11 +75,13 @@ def _(data, fmt_pct, mo):
         stat("ACUs", t["acus_consumed"]),
     ]
     if cov:
-        cards.append(stat("Up to date", fmt_pct(cov["pct_up_to_date"])))
+        cards.append(stat("Deps optimized", fmt_pct(cov["pct_optimized"])))
     if rework["pct_prs_needing_changes"] is not None:
         cards.append(stat("PRs needing rework", fmt_pct(rework["pct_prs_needing_changes"])))
 
-    mo.vstack([mo.md("## Dependency automation — effectiveness"), mo.hstack(cards, wrap=True)])
+    mo.vstack(
+        [mo.md("## Library usage optimization — effectiveness"), mo.hstack(cards, wrap=True)]
+    )
     return
 
 
@@ -91,7 +93,7 @@ def _(alt, data, mo, pd):
             alt.Chart(pd.DataFrame(_rows))
             .mark_bar()
             .encode(
-                x=alt.X("count:Q", title="Upgrades"),
+                x=alt.X("count:Q", title="Sessions"),
                 y=alt.Y("outcome:N", sort="-x", title=None),
                 color=alt.Color("outcome:N", legend=None),
                 tooltip=["outcome", "count"],
@@ -100,7 +102,7 @@ def _(alt, data, mo, pd):
         )
         _out = mo.ui.altair_chart(_chart)
     else:
-        _out = mo.md("_No tracked upgrades yet._")
+        _out = mo.md("_No optimization sessions yet._")
     _out
     return
 
@@ -112,7 +114,7 @@ def _(alt, mo, pd, report):
         _df["run"] = range(1, len(_df) + 1)
         _long = _df.melt(
             id_vars=["run"],
-            value_vars=[c for c in ("checked", "outdated", "triggered", "errors") if c in _df],
+            value_vars=[c for c in ("checked", "shortlisted", "triggered", "errors") if c in _df],
             var_name="metric",
             value_name="value",
         )
@@ -136,22 +138,21 @@ def _(alt, mo, pd, report):
 
 @app.cell
 def _(data, mo, pd):
-    if data["upgrades"]:
-        _df = pd.DataFrame(data["upgrades"])[
+    if data["sessions"]:
+        _df = pd.DataFrame(data["sessions"])[
             [
-                "name",
+                "package",
                 "ecosystem",
-                "version",
-                "update_kind",
                 "outcome",
+                "status",
                 "followup_commits",
                 "acus_consumed",
                 "pr_url",
             ]
         ]
-        _out = mo.ui.table(_df, selection=None, label="Tracked upgrades")
+        _out = mo.ui.table(_df, selection=None, label="Optimization sessions")
     else:
-        _out = mo.md("_No upgrades tracked yet._")
+        _out = mo.md("_No optimization sessions yet._")
     _out
     return
 

@@ -12,7 +12,6 @@ import tomllib
 from pathlib import Path
 
 from .models import Dependency, Ecosystem
-from .versioning import anchor
 
 # PEP 508 requirement: name, optional extras, then the version specifier up to an
 # environment marker (``;``).
@@ -52,7 +51,6 @@ def _parse_requirement(requirement: str, manifest: str) -> Dependency | None:
         ecosystem=Ecosystem.PYPI,
         constraint=spec,
         manifest=manifest,
-        current_version=anchor(Ecosystem.PYPI, spec),
     )
 
 
@@ -81,7 +79,6 @@ def parse_package_json(
                     ecosystem=Ecosystem.NPM,
                     constraint=constraint,
                     manifest=rel,
-                    current_version=anchor(Ecosystem.NPM, constraint),
                 )
             )
     return deps

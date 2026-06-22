@@ -1,10 +1,11 @@
-"""Dependency-management automation that drives Devin to perform research-led upgrades.
+"""Library usage-optimization automation driven by the Devin API.
 
-This package inspects the *top-level* dependencies of a target repository, compares
-each one against the latest version published on its registry (PyPI / npm), and, for
-dependencies that need a manifest change to adopt the new release, opens a Devin
-session instructed to research the changes between versions and adopt improvements
-*without forcing* breaking changes.
+Each run enumerates a target repository's *top-level* dependencies, cheaply ranks them
+by how heavily the repo uses them (and how recently each was looked at), and hands a
+short candidate list to a single Devin session. Devin picks one library, studies how the
+repo uses it versus its official documentation, and makes small, safe improvements to
+that usage — or opens no PR if nothing is worthwhile. It is explicitly *not* a version
+bumper.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

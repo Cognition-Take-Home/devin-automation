@@ -1,12 +1,14 @@
-# Dependency-automation configuration for the Apache Superset target repo.
+# Library usage-optimization configuration for the Apache Superset target repo.
 #
-# The automation reads only the TOP-LEVEL dependencies of the manifests listed below,
-# compares each against the latest version on its registry, and (for releases that need
-# a manifest change) opens a Devin session to perform a research-led upgrade.
+# The automation reads the TOP-LEVEL dependencies of the manifests below, ranks them by
+# how heavily the repo uses each (and how recently each was looked at), and hands a short
+# candidate list to ONE nightly Devin session. Devin picks one library and improves how
+# the repo *uses* it (better/idiomatic/safe usage) — or opens no PR if nothing is worth
+# changing. It does NOT bump versions.
 
 target_repo: Cognition-Take-Home/superset
-# Local checkout used to read manifests. In CI this is the path the superset repo is
-# cloned to; override with --target-repo-path or the TARGET_REPO_PATH env interpolation.
+# Local checkout used to read manifests and measure usage. In CI this is where the
+# superset repo is cloned; override with --target-repo-path or the TARGET_REPO_PATH env.
 target_repo_path: ../superset
 base_branch: master
 
@@ -16,22 +18,29 @@ manifests:
   - path: superset-frontend/package.json
     include_dev: true
 
-# out-of-range: only trigger Devin when the latest release is NOT permitted by the
-#               current constraint (i.e. a manifest edit is genuinely required).
-# any-newer:    trigger for any newer release.
-trigger_policy: out-of-range
-allow_prerelease: false
+# How many candidates to put in front of Devin each run (it picks exactly one).
+shortlist_size: 5
+# Don't reconsider a dependency shortlisted within this many days, so the automation
+# rotates across the library set over time instead of re-poking the same few.
+cooldown_days: 30
 
-# Cap how many Devin sessions a single run may create, so a large backlog doesn't open
-# dozens of sessions at once.
-max_sessions_per_run: 5
+# Where (relative to the repo) to measure each ecosystem's usage. Scoping to the source
+# trees keeps the ripgrep scan fast and the counts meaningful.
+usage_paths:
+  pypi:
+    - superset
+  npm:
+    - superset-frontend/src
+    - superset-frontend/packages
+    - superset-frontend/plugins
 
-# Packages to never touch (e.g. pinned for known-incompatibility reasons).
+# Packages to never optimize.
 ignore:
-  - apache-superset-core   # has no upstream registry release yet
+  - apache-superset-core
 # only: []                 # if set, restrict the run to just these names
 
 state_path: state/processed.json
+history_path: state/history.jsonl
 
 devin:
   api_base: https://api.devin.ai
@@ -40,5 +49,5 @@ devin:
   # org_id: org-xxxxxxxx
   create_draft_pr: true
   tags:
-    - dependency-automation
+    - dependency-optimization
   # max_acu_limit: 50       # optional safety cap per session

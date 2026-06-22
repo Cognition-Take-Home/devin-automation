@@ -1,4 +1,9 @@
-"""Orchestration: parse manifests -> find outdated deps -> trigger Devin sessions."""
+"""Orchestration: enumerate deps -> rank by usage -> shortlist -> one Devin session.
+
+Each run hands Devin a shortlist of the most-used (and not-recently-touched) libraries
+and asks it to deep-dive one and make small, safe usage improvements. Status, the chosen
+package, the resulting PR, and follow-up commits are synced back for reporting.
+"""
 
 from __future__ import annotations
 
@@ -9,19 +14,14 @@ from pathlib import Path
 
 from .config import Config
 from .devin import DevinApiError, DevinClient
-from .github import GitHubClient, GitHubError
+from .github import GitHubClient, GitHubError, parse_opt_title
 from .manifests import parse_manifest
 from .metrics import Coverage, Report, build_report
-from .models import (
-    Dependency,
-    OutdatedDependency,
-    RunReport,
-    TriggerResult,
-)
-from .prompts import build_prompt, build_title
-from .registries import RegistryClient, RegistryError
+from .models import Candidate, Dependency, OptimizeResult
+from .prompts import build_optimization_prompt, build_optimization_title
+from .selection import select_candidates
 from .state import State
-from .versioning import classify_update, compare, satisfies
+from .usage import UsageScanner
 
 logger = logging.getLogger(__name__)
 
@@ -31,19 +31,19 @@ class Runner:
         self,
         config: Config,
         *,
-        registry: RegistryClient | None = None,
         devin: DevinClient | None = None,
         state: State | None = None,
         github: GitHubClient | None = None,
+        usage: UsageScanner | None = None,
     ):
         self.config = config
-        self.registry = registry or RegistryClient(allow_prerelease=config.allow_prerelease)
         self.devin = devin or DevinClient(
             org_id=config.devin_org_id,
             api_base=config.devin_api_base,
             api_version=config.devin_api_version,
         )
         self.github = github or GitHubClient()
+        self.usage = usage or UsageScanner(config)
         self.state = state or State.load(config.state_path)
 
     # -- discovery ---------------------------------------------------------
@@ -75,79 +75,66 @@ class Runner:
             result.append(dep)
         return result
 
-    # -- outdated detection ------------------------------------------------
+    # -- selection ---------------------------------------------------------
 
-    def find_outdated(self, report: RunReport | None = None) -> list[OutdatedDependency]:
-        report = report or RunReport()
-        outdated: list[OutdatedDependency] = []
-        for dep in self.collect_dependencies():
-            report.checked += 1
-            try:
-                latest = self.registry.latest_version(dep.ecosystem, dep.name)
-            except RegistryError as exc:
-                msg = f"{dep.name} ({dep.ecosystem.value}): {exc}"
-                logger.warning("registry lookup failed: %s", msg)
-                report.errors.append(msg)
-                continue
-            od = self._evaluate(dep, latest)
-            if od:
-                outdated.append(od)
-        report.outdated = outdated
-        return outdated
-
-    def _evaluate(self, dep: Dependency, latest: str) -> OutdatedDependency | None:
-        in_range = satisfies(dep.ecosystem, latest, dep.constraint) if dep.constraint else True
-        newer = True
-        if dep.current_version:
-            newer = compare(dep.ecosystem, latest, dep.current_version) > 0
-
-        requires_change = not in_range
-        if self.config.trigger_policy == "out-of-range":
-            should_flag = requires_change
-        else:  # "any-newer"
-            should_flag = newer or requires_change
-
-        if not should_flag:
-            return None
-        return OutdatedDependency(
-            dependency=dep,
-            latest_version=latest,
-            update_kind=classify_update(dep.ecosystem, dep.current_version, latest),
-            requires_manifest_change=requires_change,
+    def shortlist(self, deps: list[Dependency] | None = None) -> list[Candidate]:
+        """The candidates that would be put in front of Devin this run."""
+        deps = deps if deps is not None else self.collect_dependencies()
+        usage = self.usage.counts(deps)
+        recently = self.state.recently_considered(self.config.cooldown_days)
+        return select_candidates(
+            deps, usage, recently, shortlist_size=self.config.shortlist_size
         )
 
     # -- triggering --------------------------------------------------------
 
-    def run(self, *, dry_run: bool = False) -> RunReport:
-        report = RunReport()
-        outdated = self.find_outdated(report)
-        triggered_count = 0
-        for od in outdated:
-            if triggered_count >= self.config.max_sessions_per_run:
-                report.results.append(
-                    TriggerResult(
-                        od, triggered=False, skipped_reason="max_sessions_per_run reached"
-                    )
-                )
-                continue
-            result = self._maybe_trigger(od, dry_run=dry_run)
-            report.results.append(result)
-            if result.triggered:
-                triggered_count += 1
+    def optimize(self, *, dry_run: bool = False) -> OptimizeResult:
+        deps = self.collect_dependencies()
+        candidates = self.shortlist(deps)
+        result = OptimizeResult(candidates=candidates)
+
+        if not candidates:
+            result.skipped_reason = "no candidate dependencies"
+        elif dry_run:
+            result.skipped_reason = "dry-run"
+        else:
+            self._trigger(candidates, result)
 
         if not dry_run:
             self.state.save()
-            self._append_history(report)
-        return report
+            self._append_history(result, checked=len(deps))
+        return result
 
-    def _append_history(self, report: RunReport) -> None:
-        """Append a one-line record of this run for throughput-over-time reporting."""
+    def _trigger(self, candidates: list[Candidate], result: OptimizeResult) -> None:
+        prompt = build_optimization_prompt(candidates, self.config)
+        try:
+            session = self.devin.create_session(
+                prompt,
+                title=build_optimization_title(),
+                tags=self.config.devin_tags,
+                idempotent=self.config.devin_idempotent,
+                max_acu_limit=self.config.devin_max_acu_limit,
+            )
+        except Exception as exc:  # noqa: BLE001 - surface any client error
+            msg = f"failed to create Devin session: {exc}"
+            logger.error(msg)
+            result.errors.append(msg)
+            result.skipped_reason = msg
+            return
+        self.state.record_session(
+            session.session_id, session.url, [c.dependency for c in candidates]
+        )
+        result.triggered = True
+        result.session_id = session.session_id
+        result.session_url = session.url
+
+    def _append_history(self, result: OptimizeResult, *, checked: int) -> None:
         record = {
             "timestamp": datetime.now(UTC).isoformat(),
-            "checked": report.checked,
-            "outdated": len(report.outdated),
-            "triggered": len(report.triggered),
-            "errors": len(report.errors),
+            "checked": checked,
+            "shortlisted": len(result.candidates),
+            "triggered": 1 if result.triggered else 0,
+            "errors": len(result.errors),
         }
         path = Path(self.config.history_path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -157,19 +144,16 @@ class Runner:
     # -- reporting ---------------------------------------------------------
 
     def sync_statuses(self) -> int:
-        """Refresh live status + PR info for every tracked session. Returns count synced."""
+        """Refresh live status + PR + chosen package for every session. Returns count."""
         synced = 0
-        for entry in self.state.entries():
-            if not entry.session_id:
-                continue
+        for entry in self.state.sessions():
             try:
                 status = self.devin.get_session(entry.session_id)
             except DevinApiError as exc:
-                logger.warning("status sync failed for %s: %s", entry.name, exc)
+                logger.warning("status sync failed for %s: %s", entry.session_id, exc)
                 continue
-            self.state.update_status(
-                entry.ecosystem,
-                entry.name,
+            self.state.update_session_status(
+                entry.session_id,
                 status=status.status,
                 status_detail=status.status_detail,
                 pr_url=status.pr_url,
@@ -177,24 +161,43 @@ class Runner:
                 acus_consumed=status.acus_consumed,
             )
             if status.pr_url:
-                self._sync_commits(entry.ecosystem, entry.name, status.pr_url)
+                self._resolve_choice(entry.session_id, status.pr_url)
+                self._sync_commits(entry.session_id, status.pr_url)
             synced += 1
         if synced:
             self.state.save()
         return synced
 
-    def _sync_commits(self, ecosystem: str, name: str, pr_url: str) -> None:
-        """Best-effort: record how many follow-up commits the PR needed (rework signal)."""
+    def _resolve_choice(self, session_id: str, pr_url: str) -> None:
+        """Read the PR title to learn which library Devin chose and mark it optimized."""
+        try:
+            title = self.github.pr_title(pr_url)
+        except GitHubError as exc:
+            logger.warning("pr title unavailable for %s: %s", session_id, exc)
+            return
+        name = parse_opt_title(title or "")
+        if not name:
+            return
+        ecosystem = self._ecosystem_for(name)
+        self.state.set_session_choice(session_id, ecosystem, name)
+        self.state.mark_optimized(ecosystem, name)
+
+    def _ecosystem_for(self, name: str) -> str:
+        for dep in self.collect_dependencies():
+            if dep.name.lower() == name.lower():
+                return dep.ecosystem.value
+        return "pypi"
+
+    def _sync_commits(self, session_id: str, pr_url: str) -> None:
         try:
             stats = self.github.commit_stats(pr_url)
         except GitHubError as exc:
-            logger.warning("commit stats unavailable for %s: %s", name, exc)
+            logger.warning("commit stats unavailable for %s: %s", session_id, exc)
             return
         if stats is None:
             return
-        self.state.update_commits(
-            ecosystem,
-            name,
+        self.state.update_session_commits(
+            session_id,
             total_commits=stats.total_commits,
             followup_commits=stats.followup_commits,
             human_followup_commits=stats.human_followup_commits,
@@ -218,49 +221,14 @@ class Runner:
     def build_report(self, *, coverage: bool = False) -> Report:
         cov: Coverage | None = None
         if coverage:
-            run_report = RunReport()
-            outdated = self.find_outdated(run_report)
-            cov = Coverage(checked=run_report.checked, outdated=len(outdated))
+            total = len(self.collect_dependencies())
+            cov = Coverage(
+                total=total,
+                optimized=self.state.optimized_count(),
+                considered=self.state.considered_count(),
+            )
         return build_report(
-            self.state.entries(),
+            self.state.sessions(),
             coverage=cov,
             history=self.load_history(),
-        )
-
-    def _maybe_trigger(self, od: OutdatedDependency, *, dry_run: bool) -> TriggerResult:
-        if self.state.already_triggered(od.ecosystem, od.name, od.latest_version):
-            return TriggerResult(
-                od, triggered=False, skipped_reason="already triggered for this version"
-            )
-
-        if dry_run:
-            return TriggerResult(od, triggered=False, skipped_reason="dry-run")
-
-        prompt = build_prompt(od, self.config)
-        try:
-            session = self.devin.create_session(
-                prompt,
-                title=build_title(od),
-                tags=self.config.devin_tags,
-                idempotent=self.config.devin_idempotent,
-                max_acu_limit=self.config.devin_max_acu_limit,
-            )
-        except Exception as exc:  # noqa: BLE001 - surface any client error per-dependency
-            msg = f"failed to create Devin session for {od.name}: {exc}"
-            logger.error(msg)
-            return TriggerResult(od, triggered=False, skipped_reason=msg)
-
-        self.state.record(
-            od.ecosystem,
-            od.name,
-            od.latest_version,
-            session.session_id,
-            session.url,
-            update_kind=od.update_kind.value,
-        )
-        return TriggerResult(
-            od,
-            triggered=True,
-            session_id=session.session_id,
-            session_url=session.url,
         )

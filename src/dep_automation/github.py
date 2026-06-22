@@ -23,6 +23,8 @@ from dataclasses import dataclass
 _BOT_LOGINS = {"devin-ai-integration[bot]", "devin-ai-integration", "bot_apk"}
 
 _PR_URL_RE = re.compile(r"github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/(?P<number>\d+)")
+# Matches the ``opt(<package>): ...`` PR title convention used by the optimization prompt.
+_OPT_TITLE_RE = re.compile(r"^\s*opt\((?P<name>[^)]+)\)", re.IGNORECASE)
 
 
 class GitHubError(RuntimeError):
@@ -92,6 +94,24 @@ class GitHubClient:
         owner, repo, number = parsed
         commits = self.list_pr_commits(owner, repo, number)
         return summarize_commits(commits)
+
+    def pr_title(self, pr_url: str) -> str | None:
+        """Return the PR's title (used to resolve which package Devin optimized)."""
+        parsed = parse_pr_url(pr_url)
+        if parsed is None:
+            return None
+        owner, repo, number = parsed
+        out = self._runner(
+            ["api", f"repos/{owner}/{repo}/pulls/{number}", "--jq", ".title"]
+        )
+        title = out.strip()
+        return title or None
+
+
+def parse_opt_title(title: str) -> str | None:
+    """Extract the package name from an ``opt(<package>): ...`` PR title."""
+    m = _OPT_TITLE_RE.search(title or "")
+    return m.group("name").strip() if m else None
 
 
 def summarize_commits(commits: list[dict]) -> CommitStats:
