@@ -1,0 +1,36 @@
+# Compose for the dependency-automation app.
+#
+#   export DEVIN_API_KEY=...  DEVIN_ORG_ID=org-...
+#   docker compose run --rm automation check          # list outdated deps
+#   docker compose run --rm automation run --dry-run  # preview sessions
+#   docker compose run --rm automation run            # create Devin sessions
+#   docker compose up dashboard                        # marimo UI at http://localhost:2718
+#
+# By default it reads the target repo from ../superset (override with SUPERSET_PATH).
+services:
+  automation:
+    build: .
+    image: devin-automation
+    environment:
+      DEVIN_API_KEY: ${DEVIN_API_KEY:?set DEVIN_API_KEY}
+      DEVIN_ORG_ID: ${DEVIN_ORG_ID:-}
+      TARGET_REPO_PATH: /superset
+    volumes:
+      - ./state:/app/state                       # persist de-dup state + run history
+      - ${SUPERSET_PATH:-../superset}:/superset:ro
+    command: ["check"]
+
+  dashboard:
+    build: .
+    image: devin-automation
+    environment:
+      DEVIN_API_KEY: ${DEVIN_API_KEY:-}
+      DEVIN_ORG_ID: ${DEVIN_ORG_ID:-}
+      TARGET_REPO_PATH: /superset
+    volumes:
+      - ./state:/app/state
+      - ${SUPERSET_PATH:-../superset}:/superset:ro
+    entrypoint: ["marimo"]
+    command: ["run", "dashboard.py", "--host", "0.0.0.0", "-p", "2718", "--headless", "--no-token"]
+    ports:
+      - "2718:2718"

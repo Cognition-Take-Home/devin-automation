@@ -158,6 +158,33 @@ The Devin client uses the current **v3** org-scoped API
 (`POST /v3/organizations/{org_id}/sessions`) by default; set `devin.api_version: v1` to use
 the legacy endpoint.
 
+## Docker
+
+The whole app runs in a container — see [`Dockerfile`](Dockerfile) and
+[`docker-compose.yml`](docker-compose.yml). The image bundles the CLI, the marimo
+dashboard, and `git`/`gh` (the latter powers the rework metric). The target repo
+(superset) is mounted read-only; `state/` is mounted so de-dup state and run history
+persist across runs.
+
+```bash
+export DEVIN_API_KEY=...  DEVIN_ORG_ID=org-...
+# SUPERSET_PATH defaults to ../superset; override if your checkout is elsewhere.
+
+docker compose run --rm automation check            # list outdated deps
+docker compose run --rm automation run --dry-run    # preview sessions
+docker compose run --rm automation run              # create Devin sessions
+docker compose up dashboard                          # marimo UI at http://localhost:2718
+```
+
+Or without compose:
+
+```bash
+docker build -t devin-automation .
+docker run --rm -e DEVIN_API_KEY -e DEVIN_ORG_ID \
+  -v "$PWD/state:/app/state" -v "/path/to/superset:/superset:ro" \
+  devin-automation --target-repo-path /superset check
+```
+
 ## Development
 
 ```bash
