@@ -176,11 +176,19 @@ chart, a throughput line chart, and a sortable sessions table — with a reactiv
 sync live data:
 
 ```bash
+python -m venv .venv && source .venv/bin/activate   # install into a clean env
 pip install -e ".[dashboard]"
 marimo run dashboard.py     # read-only app   (or: marimo edit dashboard.py)
 ```
 
 It reads the config path from `$DEP_AUTOMATION_CONFIG` (default `config.yaml`).
+
+> **Note:** marimo pulls in a recent `starlette`. If you install into an environment that
+> already has an older `fastapi` (e.g. `fastapi 0.104.1`, which pins `starlette<0.28.0`),
+> pip prints a resolver warning like *"fastapi … requires starlette<0.28.0 … but you have
+> starlette 1.3.1 which is incompatible."* This project does **not** use `fastapi`/`starlette`
+> directly, so the warning is harmless — the dashboard still runs. Installing into a clean
+> virtualenv (as above) avoids it entirely.
 
 ## Configuration in CI
 
