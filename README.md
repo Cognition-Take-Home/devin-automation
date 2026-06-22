@@ -181,7 +181,9 @@ pip install -e ".[dashboard]"
 marimo run dashboard.py     # read-only app   (or: marimo edit dashboard.py)
 ```
 
-It reads the config path from `$DEP_AUTOMATION_CONFIG` (default `config.yaml`).
+It reads the config path from `$DEP_AUTOMATION_CONFIG` (default `config.yaml`). Flip the
+**Use sample data** switch to populate every chart and table with synthetic demo data (no
+state or API access required) — handy for screenshots and walkthroughs.
 
 > **Note:** marimo pulls in a recent `starlette`. If you install into an environment that
 > already has an older `fastapi` (e.g. `fastapi 0.104.1`, which pins `starlette<0.28.0`),

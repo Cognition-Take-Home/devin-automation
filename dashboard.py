@@ -26,32 +26,38 @@ def _():
     import marimo as mo
     from dep_automation.config import Config
     from dep_automation.runner import Runner
+    from dep_automation.sample import build_sample_report
 
-    return Config, Runner, alt, mo, os, pd
+    return Config, Runner, alt, build_sample_report, mo, os, pd
 
 
 @app.cell
 def _(mo):
+    demo = mo.ui.switch(label="Use sample data")
     sync = mo.ui.checkbox(label="Sync live status + PR commits from APIs")
     coverage = mo.ui.checkbox(label="Compute coverage (slower)", value=True)
-    mo.hstack([sync, coverage], justify="start")
-    return coverage, sync
+    mo.hstack([demo, sync, coverage], justify="start")
+    return coverage, demo, sync
 
 
 @app.cell
-def _(Config, Runner, coverage, mo, os, sync):
+def _(Config, Runner, build_sample_report, coverage, demo, mo, os, sync):
     config_path = os.environ.get("DEP_AUTOMATION_CONFIG", "config.yaml")
-    runner = Runner(Config.from_file(config_path))
 
-    sync_note = ""
-    if sync.value:
-        try:
-            n = runner.sync_statuses()
-            sync_note = f"Synced {n} session(s) from the Devin API."
-        except Exception as exc:  # noqa: BLE001 - surface any auth/network issue in the UI
-            sync_note = f"Sync failed: {exc}"
+    if demo.value:
+        report = build_sample_report(coverage=coverage.value)
+        sync_note = "Showing **sample data** — flip off the switch for real results."
+    else:
+        runner = Runner(Config.from_file(config_path))
+        sync_note = ""
+        if sync.value:
+            try:
+                n = runner.sync_statuses()
+                sync_note = f"Synced {n} session(s) from the Devin API."
+            except Exception as exc:  # noqa: BLE001 - surface any auth/network issue in the UI
+                sync_note = f"Sync failed: {exc}"
+        report = runner.build_report(coverage=coverage.value)
 
-    report = runner.build_report(coverage=coverage.value)
     data = report.to_dict()
     mo.md(f"_Config: `{config_path}` — generated {data['generated_at']}._ {sync_note}")
     return data, report
