@@ -18,6 +18,7 @@ import sys
 from .config import Config
 from .metrics import render_markdown, render_text
 from .runner import Runner
+from .usage import RipgrepNotFound
 
 
 def _build_runner(args: argparse.Namespace) -> Runner:
@@ -141,7 +142,11 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(levelname)s %(name)s: %(message)s",
     )
-    return args.func(args)
+    try:
+        return args.func(args)
+    except RipgrepNotFound as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
