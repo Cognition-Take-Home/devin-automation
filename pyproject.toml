@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dep-automation"
+version = "0.2.0"
+description = "Library usage-optimization automation driven by the Devin API"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+dashboard = [
+    "marimo>=0.9",
+    "altair>=5.0",
+    "pandas>=2.0",
+]
+
+[project.scripts]
+dep-automation = "dep_automation.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+# dashboard.py is a marimo notebook; it follows marimo's own cell/display conventions
+# (trailing display expressions, deferred imports) that conflict with standard linting.
+extend-exclude = ["dashboard.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

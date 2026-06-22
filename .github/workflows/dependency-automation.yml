@@ -1,0 +1,97 @@
+name: Dependency optimization
+
+# Triggering strategy
+# -------------------
+# This automation runs nightly: each run hands Devin a shortlist of the repo's most-used
+# libraries and asks it to deep-dive ONE and improve how the repo uses it (or open no PR
+# if nothing is worthwhile). GitHub Actions' built-in scheduler is the cron. We also
+# expose:
+#   * workflow_dispatch    - manual runs (with an optional dry-run toggle)
+#   * repository_dispatch  - so an external trigger can kick off a run on demand
+on:
+  schedule:
+    - cron: "0 7 * * *" # nightly at 07:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Shortlist and report without creating a Devin session"
+        type: boolean
+        default: true
+  repository_dispatch:
+    types: [optimize-now]
+
+permissions:
+  contents: write # to commit the state file back to this repo
+
+concurrency:
+  group: dependency-optimization
+  cancel-in-progress: false
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    env:
+      DEVIN_API_KEY: ${{ secrets.DEVIN_API_KEY }}
+      DEVIN_ORG_ID: ${{ vars.DEVIN_ORG_ID }}
+    steps:
+      - name: Checkout automation repo
+        uses: actions/checkout@v4
+        with:
+          path: automation
+
+      - name: Checkout target repo (superset)
+        uses: actions/checkout@v4
+        with:
+          repository: Cognition-Take-Home/superset
+          path: superset
+          ref: master
+          token: ${{ secrets.TARGET_REPO_TOKEN || github.token }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        working-directory: automation
+        run: pip install -e .
+
+      - name: Show optimization shortlist
+        working-directory: automation
+        run: |
+          dep-automation --target-repo-path "${GITHUB_WORKSPACE}/superset" shortlist
+
+      - name: Run optimization
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run == false }}
+        working-directory: automation
+        run: |
+          dep-automation --target-repo-path "${GITHUB_WORKSPACE}/superset" optimize
+
+      - name: Dry run (workflow_dispatch default)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
+        working-directory: automation
+        run: |
+          dep-automation --target-repo-path "${GITHUB_WORKSPACE}/superset" optimize --dry-run
+
+      - name: Effectiveness report
+        # Always runs (even on dry runs) so the Actions run summary shows the current
+        # state of the system. --sync refreshes live session status + PRs from the API;
+        # --coverage measures how much of the library set has been optimized.
+        working-directory: automation
+        run: |
+          dep-automation --target-repo-path "${GITHUB_WORKSPACE}/superset" \
+            report --sync --coverage
+
+      - name: Commit updated state
+        if: ${{ always() }}
+        working-directory: automation
+        run: |
+          if [[ -n "$(git status --porcelain state/)" ]]; then
+            git config user.name "devin-dependency-automation[bot]"
+            git config user.email "devin-dependency-automation[bot]@users.noreply.github.com"
+            git add state/
+            git commit -m "chore: update dependency-optimization state"
+            git push
+          else
+            echo "No state changes to commit."
+          fi

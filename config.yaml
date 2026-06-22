@@ -1,0 +1,59 @@
+# Library usage-optimization configuration for the Apache Superset target repo.
+#
+# The automation reads the TOP-LEVEL dependencies of the manifests below, ranks them by
+# how heavily the repo uses each (and how recently each was looked at), and hands a short
+# candidate list to ONE nightly Devin session. Devin picks one library and improves how
+# the repo *uses* it (better/idiomatic/safe usage) — or opens no PR if nothing is worth
+# changing. A small, low-risk version bump is allowed only when a newer version unlocks a
+# clearly better usage; libraries that would need a big migration are skipped.
+
+target_repo: Cognition-Take-Home/superset
+# Local checkout used to read manifests and measure usage. In CI this is where the
+# superset repo is cloned; override with --target-repo-path or the TARGET_REPO_PATH env.
+target_repo_path: ../superset
+base_branch: master
+
+manifests:
+  - path: pyproject.toml
+    include_optional: false   # set true to also track [project.optional-dependencies]
+  - path: superset-frontend/package.json
+    include_dev: true
+
+# How many candidates to put in front of Devin each run (it picks exactly one).
+shortlist_size: 5
+# Don't reconsider a dependency shortlisted within this many days, so the automation
+# rotates across the library set over time instead of re-poking the same few.
+cooldown_days: 30
+
+# Allow Devin to include a small, low-risk version bump when (and only when) a newer
+# version unlocks a clearly better usage. Big migrations are always skipped regardless.
+# Set false to forbid any version change (optimize only at the installed version).
+allow_safe_bumps: true
+
+# Where (relative to the repo) to measure each ecosystem's usage. Scoping to the source
+# trees keeps the ripgrep scan fast and the counts meaningful.
+usage_paths:
+  pypi:
+    - superset
+  npm:
+    - superset-frontend/src
+    - superset-frontend/packages
+    - superset-frontend/plugins
+
+# Packages to never optimize.
+ignore:
+  - apache-superset-core
+# only: []                 # if set, restrict the run to just these names
+
+state_path: state/processed.json
+history_path: state/history.jsonl
+
+devin:
+  api_base: https://api.devin.ai
+  api_version: v3           # v3 is current; cog_ service keys require it
+  # Organization id (prefix "org-"). Falls back to the DEVIN_ORG_ID env var.
+  # org_id: org-xxxxxxxx
+  create_draft_pr: true
+  tags:
+    - dependency-optimization
+  # max_acu_limit: 50       # optional safety cap per session
