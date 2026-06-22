@@ -4,7 +4,8 @@
 # how heavily the repo uses each (and how recently each was looked at), and hands a short
 # candidate list to ONE nightly Devin session. Devin picks one library and improves how
 # the repo *uses* it (better/idiomatic/safe usage) — or opens no PR if nothing is worth
-# changing. It does NOT bump versions.
+# changing. A small, low-risk version bump is allowed only when a newer version unlocks a
+# clearly better usage; libraries that would need a big migration are skipped.
 
 target_repo: Cognition-Take-Home/superset
 # Local checkout used to read manifests and measure usage. In CI this is where the
@@ -23,6 +24,11 @@ shortlist_size: 5
 # Don't reconsider a dependency shortlisted within this many days, so the automation
 # rotates across the library set over time instead of re-poking the same few.
 cooldown_days: 30
+
+# Allow Devin to include a small, low-risk version bump when (and only when) a newer
+# version unlocks a clearly better usage. Big migrations are always skipped regardless.
+# Set false to forbid any version change (optimize only at the installed version).
+allow_safe_bumps: true
 
 # Where (relative to the repo) to measure each ecosystem's usage. Scoping to the source
 # trees keeps the ripgrep scan fast and the counts meaningful.

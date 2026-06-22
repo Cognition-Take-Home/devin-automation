@@ -7,7 +7,9 @@ repository, driven by the [Devin API](https://docs.devin.ai/api-reference/v1/ses
 Each night it hands Devin a short list of the libraries superset uses most heavily and
 asks it to deep-dive **one** of them: study how the repo actually uses the library, compare
 that against the library's documentation, and make small, safe improvements to that usage.
-It is explicitly **not** a version bumper — it improves how existing dependencies are used.
+It is not a version bumper — it improves how existing dependencies are used. A small,
+low-risk version bump is allowed **only** when a newer version unlocks a clearly better
+usage; libraries that would need a big migration to improve are skipped (out of scope).
 
 ## Why usage optimization (not version bumping)
 
@@ -25,7 +27,12 @@ Each session is asked to:
    documentation/API reference for the installed version.
 3. **Make small, safe improvements** — deprecated APIs still in use, redundant workarounds
    the library now makes unnecessary, simpler/idiomatic calls, easy correctness/perf wins.
-4. **Open no PR if nothing is worthwhile** — a no-op night is a valid, expected result; it
+4. **Bump only when it's small and safe** — if (and only if) a newer version unlocks a
+   distinctly better usage and the bump is mechanical, it may update the version + lockfile
+   and adopt the improvement in the same PR. A library that is several majors behind or
+   would need a big migration is skipped instead (`allow_safe_bumps: false` forbids any
+   version change).
+5. **Open no PR if nothing is worthwhile** — a no-op night is a valid, expected result; it
    avoids low-value churn. Anything large or risky is documented as a suggested follow-up
    rather than forced, and tests/lint/types are never weakened.
 

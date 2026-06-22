@@ -111,9 +111,10 @@ def test_optimize_triggers_one_session(tmp_path):
     result = runner.optimize()
     assert result.triggered is True
     assert len(devin.calls) == 1
-    # the prompt is a usage-optimization prompt, not a version bump
+    # the prompt is a usage-optimization prompt that allows only small, safe bumps
     prompt = devin.calls[0]["prompt"]
-    assert "NOT a version upgrade" in prompt
+    assert "not a version-upgrade chore" in prompt
+    assert "big migration" in prompt
     assert "It is OK to find nothing" in prompt
     assert len(result.candidates) == 3
 

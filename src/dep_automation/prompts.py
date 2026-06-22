@@ -1,10 +1,12 @@
 """Builds the Devin session prompt for a nightly *library usage optimization*.
 
-The automation is not a version bumper. Each run hands Devin a small shortlist of
-dependencies the repo already uses and asks it to pick the single best opportunity, deep
--dive how that library is used versus how it *should* be used (per its official docs),
-and make small, safe improvements — never large rewrites, and never a forced change.
-Crucially, Devin may conclude there is nothing worthwhile and open no PR.
+Each run hands Devin a small shortlist of dependencies the repo already uses and asks it
+to pick the single best opportunity, deep-dive how that library is used versus how it
+*should* be used (per its official docs), and make small, safe improvements — never large
+rewrites, and never a forced change. A small, low-risk version bump is allowed *only* when
+newer versions of the chosen library unlock a clearly better usage; a library that would
+need a big migration to improve is skipped (that migration is out of scope). Crucially,
+Devin may conclude there is nothing worthwhile and open no PR.
 """
 
 from __future__ import annotations
@@ -31,13 +33,34 @@ def _candidate_lines(candidates: list[Candidate]) -> str:
     return "\n".join(lines)
 
 
+def _version_policy(config: Config) -> str:
+    if not config.allow_safe_bumps:
+        return (
+            "Work strictly with the **currently-installed** version. Do NOT bump the "
+            "library's version. If the only way to improve usage is to upgrade, skip the "
+            "library and open no PR."
+        )
+    return (
+        "Prefer improving usage at the **currently-installed** version. You MAY include a "
+        "small, low-risk version bump (a patch/minor, or a major with a short, clearly "
+        "safe changelog) **only if** a newer version unlocks a distinctly better usage "
+        "(a new API that replaces a workaround, a removed deprecation, a simpler pattern) "
+        "and the bump itself is mechanical. In that case, update the version constraint, "
+        "regenerate the lockfile if the repo uses one, and adopt the improvement in the "
+        "same PR.\n"
+        "Do NOT take on a **big migration**: if the library is several majors behind, or "
+        "adopting the improvement would touch many files, require broad code changes, or "
+        "carry real breakage risk, treat that as out of scope — skip the library and open "
+        "no PR (that migration is a separate effort). Never change unrelated dependencies."
+    )
+
+
 def build_optimization_prompt(candidates: list[Candidate], config: Config) -> str:
     pr_kind = "draft pull request" if config.create_draft_pr else "pull request"
     return f"""\
 You are improving how the repository `{config.target_repo}` (base branch \
-`{config.base_branch}`) *uses* the libraries it already depends on. This is NOT a \
-version upgrade task — do not bump versions. The goal is better, more idiomatic, safer \
-use of an existing dependency.
+`{config.base_branch}`) *uses* the libraries it already depends on. The goal is better, \
+more idiomatic, safer use of an existing dependency — not a version-upgrade chore.
 
 ## Candidate libraries (pick exactly ONE)
 {_candidate_lines(candidates)}
@@ -57,13 +80,17 @@ recommended options not being set.
 4. **Make only those small, clearly-beneficial changes.** Keep the diff focused and easy \
 to review.
 
+## Versions (read carefully)
+{_version_policy(config)}
+
 ## Hard rules
 - **No large or risky rewrites.** If a worthwhile improvement would require a big or \
 risky change, do NOT make it — note it in the PR description under "Suggested \
 follow-ups" instead.
 - **It is OK to find nothing.** If there is no clearly-beneficial, low-risk improvement, \
-do NOT open a PR. Report what you reviewed and why nothing was worth changing.
-- **Do not bump the dependency's version** or change unrelated dependencies/code.
+do NOT open a PR. Report what you reviewed and why nothing was worth changing. A library \
+that is so far behind that improving its usage would require a big migration is a valid \
+reason to skip it and open no PR.
 - **Do not weaken** tests, type checks, lint, or CI. Run the repo's lint/type/test \
 suites (and pre-commit hooks) before opening a PR.
 - Respect the repo's contribution guidelines (AGENTS.md / CONTRIBUTING / pre-commit).

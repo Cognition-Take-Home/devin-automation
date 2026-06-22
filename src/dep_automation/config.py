@@ -37,6 +37,9 @@ class Config:
     # Where (relative to the repo) to measure each ecosystem's usage. Defaults to the
     # whole repo if a given ecosystem is not listed.
     usage_paths: dict[str, list[str]] = field(default_factory=dict)
+    # Allow a small, low-risk version bump when (and only when) newer versions of the
+    # chosen library unlock a clearly better usage. Big migrations are always skipped.
+    allow_safe_bumps: bool = True
 
     # --- Devin -------------------------------------------------------------
     devin_api_base: str = "https://api.devin.ai"
@@ -82,6 +85,7 @@ class Config:
             shortlist_size=raw.get("shortlist_size", 5),
             cooldown_days=raw.get("cooldown_days", 30),
             usage_paths=raw.get("usage_paths", {}),
+            allow_safe_bumps=raw.get("allow_safe_bumps", True),
             devin_api_base=devin.get("api_base", "https://api.devin.ai"),
             devin_api_version=devin.get("api_version", "v3"),
             devin_org_id=devin.get("org_id") or os.environ.get("DEVIN_ORG_ID"),
